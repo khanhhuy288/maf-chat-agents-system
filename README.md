@@ -43,8 +43,8 @@ uv run --prerelease=allow obungi-chat-agents-system
 
 ### Run the Dev UI (browser showcase)
 
-![Workflow input form](2025-11-19_15-19-31.png)
-![Dev UI execution timeline](2025-11-19_15-43-39.png)
+![Workflow input form](2025-11-19_15-43-39.png)
+![Dev UI execution timeline](2025-11-19_15-19-31.png)
 
 ```
 uv run --prerelease=allow obungi-chat-agents-system-devui --auto-open --simulate-dispatch
