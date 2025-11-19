@@ -14,6 +14,10 @@ class ResponseFormatterExecutor(Executor):
         self, context: TicketContext, ctx: WorkflowContext[TicketContext, TicketResponse]
     ) -> None:
         metadata = {
+            "name": context.name,
+            "vorname": context.vorname,
+            "email": context.email,
+            "original_message": context.original_message,
             "category": context.category.value if context.category else None,
             "summary": context.summary,
             "dispatch_payload": context.dispatch_payload,

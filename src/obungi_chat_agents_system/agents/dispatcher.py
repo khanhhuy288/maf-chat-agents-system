@@ -9,6 +9,7 @@ class DispatcherExecutor(Executor):
     """Posts structured tickets to the Logic App endpoint."""
 
     DISPATCHABLE = {
+        TicketCategory.AI_HISTORY,
         TicketCategory.O365,
         TicketCategory.HARDWARE,
         TicketCategory.LOGIN,

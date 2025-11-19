@@ -26,10 +26,9 @@ STATUS_INTERVAL_SECONDS = 1.8
 
 def collect_ticket_message() -> str:
     console.print(
-        "[bold]Bitte beschreibe dein Anliegen (zwei Leerzeilen zum Abschluss, STRG+C zum Beenden).[/bold]"
+        "[bold]Bitte beschreibe dein Anliegen (Leerzeile zum Abschluss, STRG+C zum Beenden).[/bold]"
     )
     lines: list[str] = []
-    blank_streak = 0
     while True:
         try:
             line = input("> ")
@@ -39,13 +38,8 @@ def collect_ticket_message() -> str:
         if not line.strip():
             if not lines:
                 continue
-            blank_streak += 1
-            if blank_streak >= 2:
-                break
-            lines.append("")
-            continue
+            break
 
-        blank_streak = 0
         lines.append(line)
 
     message = "\n".join(lines).strip()
@@ -170,5 +164,4 @@ def main() -> None:
             render_response(response)
             break
 
-        console.print("\n[dim]> Nächste Nachricht eingeben …[/dim]\n")
 
