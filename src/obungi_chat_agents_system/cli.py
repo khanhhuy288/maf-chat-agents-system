@@ -25,14 +25,27 @@ STATUS_INTERVAL_SECONDS = 1.8
 
 
 def collect_ticket_message() -> str:
-    console.print("[bold]Bitte beschreibe dein Anliegen (leerzeile zum Abschluss).[/bold]")
+    console.print(
+        "[bold]Bitte beschreibe dein Anliegen (zwei Leerzeilen zum Abschluss, STRG+C zum Beenden).[/bold]"
+    )
     lines: list[str] = []
+    blank_streak = 0
     while True:
-        line = input("> ")
-        if not line.strip() and lines:
-            break
-        if not line.strip() and not lines:
+        try:
+            line = input("> ")
+        except EOFError:
+            line = ""
+
+        if not line.strip():
+            if not lines:
+                continue
+            blank_streak += 1
+            if blank_streak >= 2:
+                break
+            lines.append("")
             continue
+
+        blank_streak = 0
         lines.append(line)
 
     message = "\n".join(lines).strip()
@@ -103,38 +116,59 @@ def prompt_missing_fields(missing_fields: list[str]) -> dict[str, str]:
 
 
 def main() -> None:
-    message = collect_ticket_message()
-    known_fields: dict[str, str | None] = {"name": None, "vorname": None, "email": None}
-
+    console.print("[dim]Zum Beenden jederzeit STRG+C drücken.[/dim]\n")
     while True:
-        ticket_input = TicketInput(
-            message=message,
-            name=known_fields["name"],
-            vorname=known_fields["vorname"],
-            email=known_fields["email"],
-        )
         try:
-            response = asyncio.run(run_ticket_flow(ticket_input))
+            message = collect_ticket_message()
         except KeyboardInterrupt:
             console.print("\nAbgebrochen.")
             return
 
-        if response is None:
-            console.print("[red]Es wurde keine Antwort vom Workflow zurückgegeben.[/red]")
-            return
+        known_fields: dict[str, str | None] = {
+            "name": None,
+            "vorname": None,
+            "email": None,
+        }
 
-        if response.status == "missing_identity":
-            console.print(f"\n[bold yellow]{response.message}[/bold yellow]")
-            missing_fields = response.metadata.get("missing_fields", []) if response.metadata else []
-            if not missing_fields:
-                console.print("[red]Unbekannte fehlende Felder. Vorgang abgebrochen.[/red]")
+        while True:
+            ticket_input = TicketInput(
+                message=message,
+                name=known_fields["name"],
+                vorname=known_fields["vorname"],
+                email=known_fields["email"],
+            )
+            try:
+                response = asyncio.run(run_ticket_flow(ticket_input))
+            except KeyboardInterrupt:
+                console.print("\nAbgebrochen.")
                 return
-            updates = prompt_missing_fields(missing_fields)
-            for key, value in updates.items():
-                known_fields[key] = value
-            console.print("[green]Danke! Ich versuche es erneut.[/green]\n")
-            continue
 
-        render_response(response)
-        break
+            if response is None:
+                console.print(
+                    "[red]Es wurde keine Antwort vom Workflow zurückgegeben.[/red]"
+                )
+                return
+
+            if response.status == "missing_identity":
+                console.print(f"\n[bold yellow]{response.message}[/bold yellow]")
+                missing_fields = (
+                    response.metadata.get("missing_fields", [])
+                    if response.metadata
+                    else []
+                )
+                if not missing_fields:
+                    console.print(
+                        "[red]Unbekannte fehlende Felder. Vorgang abgebrochen.[/red]"
+                    )
+                    return
+                updates = prompt_missing_fields(missing_fields)
+                for key, value in updates.items():
+                    known_fields[key] = value
+                console.print("[green]Danke! Ich versuche es erneut.[/green]\n")
+                continue
+
+            render_response(response)
+            break
+
+        console.print("\n[dim]> Nächste Nachricht eingeben …[/dim]\n")
 
