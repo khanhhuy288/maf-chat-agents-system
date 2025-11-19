@@ -38,7 +38,10 @@ def create_ticket_workflow(*, dry_run_dispatch: bool = False) -> Workflow:
     formatter = ResponseFormatterExecutor()
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(
+            name="Ticket Workflow",
+            description="Sequential intake, classification, historian, dispatcher and formatter pipeline.",
+        )
         .set_start_executor(intake)
         .add_edge(intake, identity)
         .add_edge(identity, validation)

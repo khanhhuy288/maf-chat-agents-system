@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "agent-framework>=1.0.0b251114",
+    "agent-framework[devui]>=1.0.0b251114",
     "aiohttp>=3.13.2",
     "azure-ai-projects==1.1.0b4",
     "azure-identity>=1.26.0b1",
@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 obungi-chat-agents-system = "obungi_chat_agents_system:main"
+obungi-chat-agents-system-devui = "obungi_chat_agents_system.devui_app:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1515,7 +1515,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework", specifier = ">=1.0.0b251114" },
+    { name = "agent-framework", extras = ["devui"], specifier = ">=1.0.0b251114" },
     { name = "aiohttp", specifier = ">=3.13.2" },
     { name = "azure-ai-projects", specifier = "==1.1.0b4" },
     { name = "azure-identity", specifier = ">=1.26.0b1" },
