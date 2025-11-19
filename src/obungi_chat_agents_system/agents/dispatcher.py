@@ -36,7 +36,7 @@ class DispatcherExecutor(Executor):
             "email": context.email,
             "kategorie": context.category.value if context.category else None,
             "zusammenfassung": context.summary,
-            "anfrage": context.cleaned_request or context.original_message,
+            "anfrage": context.original_message,
         }
 
         if self.simulate_only:
@@ -62,10 +62,11 @@ class DispatcherExecutor(Executor):
             return
 
         context.dispatch_payload = payload
-        context.response = (
-            "Das Ticket wurde erfolgreich an das IT-Team übergeben. "
-            "Du erhältst eine Rückmeldung per E-Mail."
-        )
+        if not context.response:
+            context.response = (
+                "Das Ticket wurde erfolgreich an das IT-Team übergeben. "
+                "Du erhältst eine Rückmeldung per E-Mail."
+            )
 
         await ctx.send_message(context)
 

@@ -86,9 +86,6 @@ def render_response(response: TicketResponse | None) -> None:
     if response.payload:
         console.print("\n[bold]Versandtes JSON:[/bold]")
         console.print(response.payload)
-    if response.metadata:
-        console.print("\n[bold]Metadaten:[/bold]")
-        console.print({k: v for k, v in response.metadata.items() if v})
 
 
 def prompt_missing_fields(missing_fields: list[str]) -> dict[str, str]:
