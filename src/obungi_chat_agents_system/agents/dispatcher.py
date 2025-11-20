@@ -8,6 +8,11 @@ from obungi_chat_agents_system.schemas import TicketCategory, TicketContext, Tic
 class DispatcherExecutor(Executor):
     """Posts structured tickets to the Logic App endpoint."""
 
+    _SUCCESS_MESSAGE = (
+        "Das Ticket wurde erfolgreich an das IT-Team übergeben. "
+        "Du erhältst eine Rückmeldung per E-Mail."
+    )
+
     DISPATCHABLE = {
         TicketCategory.AI_HISTORY,
         TicketCategory.O365,
@@ -41,9 +46,8 @@ class DispatcherExecutor(Executor):
 
         if self.simulate_only:
             context.dispatch_payload = payload
-            context.response = (
-                "Ticket wurde im Simulationsmodus erzeugt (kein Versand)."
-            )
+            if not context.response:
+                context.response = self._SUCCESS_MESSAGE
             await ctx.send_message(context)
             return
 
@@ -63,10 +67,7 @@ class DispatcherExecutor(Executor):
 
         context.dispatch_payload = payload
         if not context.response:
-            context.response = (
-                "Das Ticket wurde erfolgreich an das IT-Team übergeben. "
-                "Du erhältst eine Rückmeldung per E-Mail."
-            )
+            context.response = self._SUCCESS_MESSAGE
 
         await ctx.send_message(context)
 

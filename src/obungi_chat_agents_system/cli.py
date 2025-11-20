@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import asyncio
+import argparse
 import asyncio
 from contextlib import suppress
 from typing import Sequence
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.status import Status
 
@@ -13,6 +16,7 @@ from obungi_chat_agents_system.schemas import TicketInput, TicketResponse
 from obungi_chat_agents_system.workflow import create_ticket_workflow
 
 console = Console()
+_composer_session = PromptSession()
 
 STATUS_MESSAGES: Sequence[str] = (
     "[cyan]Schritt 1/5: Nachricht wird analysiert …[/cyan]",
@@ -22,31 +26,109 @@ STATUS_MESSAGES: Sequence[str] = (
     "[cyan]Schritt 5/5: Antwort wird formatiert …[/cyan]",
 )
 STATUS_INTERVAL_SECONDS = 1.8
+COMPOSER_COMMANDS = {
+    ":preview": "Aktuelle Nachricht anzeigen",
+    ":clear": "Bisherige Eingabe löschen",
+    ":help": "Liste aller Befehle anzeigen",
+    ":quit": "Sitzung beenden (entspricht STRG+C)",
+}
+
+
+def _render_composer_help() -> None:
+    lines = ["[bold]STRG+J[/bold] – Nachricht sofort senden (Shortcut)"]
+    lines.extend(
+        f"[bold]{cmd}[/bold] – {info}" for cmd, info in COMPOSER_COMMANDS.items()
+    )
+    lines.append("[bold]::[/bold] am Zeilenanfang, um ein führendes ':' als Text zu schreiben.")
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="Kommandos",
+            border_style="cyan",
+        )
+    )
+
+
+def _render_preview(lines: list[str]) -> None:
+    if not lines:
+        console.print("[dim]Noch keine Nachricht erfasst.[/dim]")
+        return
+    text = "\n".join(lines)
+    char_count = sum(len(line) for line in lines)
+    console.print(
+        Panel(
+            text,
+            title=f"Vorschau · {len(lines)} Zeilen · {char_count} Zeichen",
+            border_style="green",
+        )
+    )
+
+
+def _prompt_composer_line() -> tuple[str, bool]:
+    shortcut = {"value": False}
+    bindings = KeyBindings()
+
+    def _register(binding: str) -> None:
+        @bindings.add(binding)
+        def _(event) -> None:
+            shortcut["value"] = True
+            event.app.exit(event.app.current_buffer.text)
+
+    _register("c-j")
+
+    line = _composer_session.prompt("│ ", key_bindings=bindings)
+    return line, shortcut["value"]
 
 
 def collect_ticket_message() -> str:
     console.print(
-        "[bold]Bitte beschreibe dein Anliegen (Leerzeile zum Abschluss, STRG+C zum Beenden).[/bold]"
+        Panel(
+            "Schreibe deine Anfrage frei heraus. Leerzeilen sind erlaubt.\n"
+            "Drücke [bold]STRG+J[/bold], wenn du fertig bist, oder tippe [bold]:help[/bold] für alle Befehle.",
+            title="Ticket Composer",
+            border_style="cyan",
+        )
     )
     lines: list[str] = []
     while True:
         try:
-            line = input("> ")
+            line, shortcut_sent = _prompt_composer_line()
         except EOFError:
-            line = ""
+            raise KeyboardInterrupt
 
-        if not line.strip():
-            if not lines:
+        if line.startswith("::"):
+            lines.append(line[1:])
+            continue
+
+        stripped = line.strip()
+
+        if shortcut_sent and not stripped.startswith(":"):
+            if line:
+                lines.append(line)
+            message = "\n".join(lines).strip()
+            if not message:
+                console.print("[yellow]Es wurde noch kein Text eingegeben.[/yellow]")
                 continue
-            break
+            return message
+
+        if stripped.startswith(":"):
+            command = stripped.lower()
+            if command == ":preview":
+                _render_preview(lines)
+                continue
+            if command == ":clear":
+                lines.clear()
+                console.print("[green]Nachricht gelöscht. Du kannst neu beginnen.[/green]")
+                continue
+            if command == ":help":
+                _render_composer_help()
+                continue
+            if command == ":quit":
+                raise KeyboardInterrupt
+            console.print(f"[yellow]Unbekannter Befehl '{command}'. Tippe :help für Hilfe.[/yellow]")
+            continue
 
         lines.append(line)
-
-    message = "\n".join(lines).strip()
-    if not message:
-        console.print("[red]Es wurde keine Nachricht eingegeben. Bitte erneut versuchen.[/red]")
-        return collect_ticket_message()
-    return message
 
 
 async def _cycle_status(status: Status, messages: Sequence[str]) -> None:
@@ -58,8 +140,10 @@ async def _cycle_status(status: Status, messages: Sequence[str]) -> None:
         await asyncio.sleep(STATUS_INTERVAL_SECONDS)
 
 
-async def run_ticket_flow(ticket_input: TicketInput) -> TicketResponse | None:
-    workflow = create_ticket_workflow()
+async def run_ticket_flow(
+    ticket_input: TicketInput, *, dry_run_dispatch: bool
+) -> TicketResponse | None:
+    workflow = create_ticket_workflow(dry_run_dispatch=dry_run_dispatch)
     with console.status(
         "[bold cyan]Workflow wird gestartet …[/bold cyan]", spinner="dots"
     ) as status:
@@ -106,7 +190,20 @@ def prompt_missing_fields(missing_fields: list[str]) -> dict[str, str]:
     return collected
 
 
-def main() -> None:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="CLI für das Ticket-Workflow-System."
+    )
+    parser.add_argument(
+        "--simulate-dispatch",
+        action="store_true",
+        help="HTTP-POSTs an die Logic App überspringen (nur Simulation).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
     console.print("[dim]Zum Beenden jederzeit STRG+C drücken.[/dim]\n")
     while True:
         try:
@@ -129,7 +226,11 @@ def main() -> None:
                 email=known_fields["email"],
             )
             try:
-                response = asyncio.run(run_ticket_flow(ticket_input))
+                response = asyncio.run(
+                    run_ticket_flow(
+                        ticket_input, dry_run_dispatch=args.simulate_dispatch
+                    )
+                )
             except KeyboardInterrupt:
                 console.print("\nAbgebrochen.")
                 return

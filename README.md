@@ -36,7 +36,11 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
 ```
 uv run --prerelease=allow obungi-chat-agents-system
 ```
-- Paste only the ticket text (finish with a blank line).
+- Compose your request line by line; blank lines are preserved.
+- Press `STRG+ENTER` to submit instantly (or type `:done` / `:send` as a fallback). Helpful commands:
+  - `:preview` shows the current text inside a panel.
+  - `:clear` wipes the buffer so you can start over.
+  - `:help` lists all commands (including `::` escaping for literal colons).
 - Watch live agent status updates (intake → identity → validation → classification → dispatch).
 - Missing identity fields are called out explicitly; supply only what’s missing and continue.
 - After the final response, the CLI immediately prompts for the next ticket.
