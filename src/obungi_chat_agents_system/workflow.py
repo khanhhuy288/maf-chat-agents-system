@@ -250,7 +250,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             }
     
     return chat_client.create_agent(
-        name="ticket-support-agent",
+        name="Ticket Support Agent",
         description="IT-Support-Assistent für das Obungi Ticket-System",
         instructions=(
             "Du bist ein freundlicher IT-Support-Assistent für das Obungi Ticket-System. "
