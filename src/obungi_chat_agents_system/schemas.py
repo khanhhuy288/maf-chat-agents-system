@@ -15,7 +15,7 @@ class TicketCategory(str, Enum):
 
 @dataclass(slots=True)
 class TicketInput:
-    """Raw user input captured from CLI or DevUI."""
+    """Raw user input captured from DevUI."""
 
     message: str
     name: Optional[str] = None
@@ -40,7 +40,7 @@ class TicketContext:
 
 @dataclass(slots=True)
 class TicketResponse:
-    """Terminal response returned to the CLI or DevUI."""
+    """Response returned to the DevUI."""
 
     status: str
     message: str
