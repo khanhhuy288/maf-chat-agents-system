@@ -16,10 +16,14 @@ Analysiere die Anfrage und gib ein JSON mit genau diesen Feldern zurück:
 }
 Lass Felder leer, wenn sie nicht eindeutig genannt werden. Verwende keine Erklärungen.
 
-WICHTIG: Der Text MUSS im Format "Name, Vorname, E-Mail-Adresse" vorliegen (komma-getrennt, genau drei Elemente).
-Beispiel: "Müller, Hans, hans@example.com" → name="Müller", vorname="Hans", email="hans@example.com"
+Der Text kann in verschiedenen Formaten vorliegen:
+1. Komma-getrennt: "Name, Vorname, E-Mail-Adresse" (z.B. "Müller, Hans, hans@example.com")
+2. Natürliche Sprache: "mein Name ist [Vorname] [Nachname], meine E-Mail ist [email]" (z.B. "mein Name ist Peter Schneider, meine E-Mail ist peter@example.com")
+3. Andere natürliche Formulierungen mit "Name ist", "E-Mail ist", "ich heiße", etc.
 
-Bei komma-getrennten Formaten ist das erste Element der Nachname, das zweite der Vorname, und das dritte die E-Mail-Adresse.
+Extrahiere die Kontaktdaten aus dem Text, unabhängig vom Format.
+Bei natürlicher Sprache: Der erste Name ist normalerweise der Vorname, der letzte Name ist der Nachname.
+Bei komma-getrennten Formaten: Das erste Element ist der Nachname, das zweite der Vorname, und das dritte die E-Mail-Adresse.
 """
 
 
@@ -31,6 +35,28 @@ class IdentityExtractorExecutor(Executor):
         "name": re.compile(r"\b(?:name|familienname)\b[:\-]?\s*(?P<value>[A-Za-zÄÖÜäöüß\s'-]+)", re.IGNORECASE),
         "vorname": re.compile(r"\bvorname\b[:\-]?\s*(?P<value>[A-Za-zÄÖÜäöüß\s'-]+)", re.IGNORECASE),
     }
+    # Natural language patterns for German
+    _NATURAL_NAME_PATTERNS = [
+        # "mein Name ist Peter Schneider" or "Name ist Peter Schneider"
+        # Handles punctuation and surrounding text
+        re.compile(
+            r"(?:mein\s+)?name\s+ist\s+(?P<vorname>[A-Za-zÄÖÜäöüß]+)\s+(?P<name>[A-Za-zÄÖÜäöüß]+)(?:[,\s]|$)",
+            re.IGNORECASE
+        ),
+        # "ich heiße Peter Schneider" or "ich bin Peter Schneider"
+        re.compile(
+            r"ich\s+(?:heiße|bin)\s+(?P<vorname>[A-Za-zÄÖÜäöüß]+)\s+(?P<name>[A-Za-zÄÖÜäöüß]+)(?:[,\s]|$)",
+            re.IGNORECASE
+        ),
+    ]
+    _NATURAL_EMAIL_PATTERNS = [
+        # "meine E-Mail ist peter@example.com" or "E-Mail ist peter@example.com"
+        # Handles punctuation and surrounding text
+        re.compile(
+            r"(?:meine\s+)?(?:e-?mail|email)\s+ist\s+(?P<email>[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?:[,\s\.]|$)",
+            re.IGNORECASE
+        ),
+    ]
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "identity") -> None:
         self.agent = chat_client.create_agent(instructions=IDENTITY_PROMPT, name=id)
@@ -45,6 +71,9 @@ class IdentityExtractorExecutor(Executor):
         This executor handles both initial messages and follow-up messages where the user
         provides identity information after being asked for it. It uses regex fallback first
         (for reliability) and then LLM extraction if needed.
+        
+        When the message contains a separator (---), it extracts identity ONLY from the part
+        after the separator, while preserving the full message for classification.
         """
         # Debug logging
         import logging
@@ -58,6 +87,29 @@ class IdentityExtractorExecutor(Executor):
             # If original_message is missing, we can't extract - pass through
             await ctx.send_message(context)
             return
+        
+        # Check if message contains separator (---) indicating identity was provided in follow-up
+        # Format: "{original_message}\n\n---\n{identity_message}"
+        # In this case, we should extract identity ONLY from the part after the separator
+        full_message = context.original_message
+        identity_text = full_message
+        separator = "\n\n---\n"
+        
+        if separator in full_message:
+            # Split on separator and extract identity from the part after it
+            parts = full_message.split(separator, 1)
+            if len(parts) == 2:
+                identity_text = parts[1].strip()
+                logger.debug(f"IdentityExtractorExecutor - detected separator, extracting from identity part: {repr(identity_text)}")
+                # Keep the full message in original_message for classification, but extract from identity_text
+            else:
+                # Malformed separator, use full message
+                logger.warning(f"IdentityExtractorExecutor - malformed separator, using full message")
+                identity_text = full_message
+        else:
+            # No separator, extract from full message
+            logger.debug(f"IdentityExtractorExecutor - no separator, extracting from full message")
+            identity_text = full_message
             
         missing = [field for field in ("name", "vorname", "email") if not getattr(context, field)]
         logger.debug(f"IdentityExtractorExecutor - missing fields: {missing}")
@@ -70,8 +122,9 @@ class IdentityExtractorExecutor(Executor):
         # Try regex fallback first for strict format "Name, Vorname, Email"
         # This is more reliable than LLM for this specific format
         # Always try regex first, even if we think we have some values
+        # Pass identity_text (not full_message) for extraction
         logger.debug(f"IdentityExtractorExecutor - calling _apply_regex_fallback with missing: {missing}")
-        self._apply_regex_fallback(context, missing)
+        self._apply_regex_fallback(context, missing, identity_text)
         
         logger.debug(f"IdentityExtractorExecutor - after regex fallback - name: {context.name}, vorname: {context.vorname}, email: {context.email}")
         
@@ -84,9 +137,10 @@ class IdentityExtractorExecutor(Executor):
             try:
                 logger.debug(f"IdentityExtractorExecutor - trying LLM extraction for missing fields: {missing}")
                 # Enhance the prompt with context about what we're looking for
+                # Use identity_text (not full_message) for extraction
                 extraction_prompt = (
                     f"Extrahiere aus folgendem Text die fehlenden Kontaktdaten: {', '.join(missing)}\n\n"
-                    f"Text: {context.original_message}\n\n"
+                    f"Text: {identity_text}\n\n"
                     f"Gib ein JSON mit genau diesen Feldern zurück: {', '.join(missing)}"
                 )
                 response = await self.agent.run(extraction_prompt)
@@ -139,11 +193,19 @@ class IdentityExtractorExecutor(Executor):
             return match.group(0).lower() if match else None
         return value
 
-    def _apply_regex_fallback(self, context: TicketContext, missing: list[str]) -> None:
-        """Fallback extraction that accepts strict format: "Name, Vorname, E-Mail-Adresse".
+    def _apply_regex_fallback(self, context: TicketContext, missing: list[str], text: str | None = None) -> None:
+        """Fallback extraction that handles multiple formats:
+        - Strict format: "Name, Vorname, E-Mail-Adresse" (comma-separated, exactly 3 parts)
+        - Natural language: "mein Name ist Peter Schneider, meine E-Mail ist peter@example.com"
+        - Flexible extraction: extracts email and tries to find names in surrounding context
         
-        This method handles the case where the user provides identity information in a follow-up message
-        after being asked for it. It extracts from the original_message which should contain the identity info.
+        This method handles both initial messages with embedded identity and follow-up messages
+        where the user provides identity information after being asked for it.
+        
+        Args:
+            context: The ticket context to update with extracted values
+            missing: List of missing field names to extract
+            text: The text to extract from. If None, uses context.original_message
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -151,13 +213,16 @@ class IdentityExtractorExecutor(Executor):
         if not missing:
             logger.debug("_apply_regex_fallback - no missing fields, returning")
             return
-            
-        # Ensure we have original_message - it should always be set by IntakeExecutor
-        if not hasattr(context, 'original_message') or not context.original_message:
-            logger.warning(f"_apply_regex_fallback - original_message missing: {repr(getattr(context, 'original_message', 'NOT SET'))}")
-            return
-            
-        text = context.original_message.strip()
+        
+        # Use provided text or fall back to original_message
+        if text is None:
+            # Ensure we have original_message - it should always be set by IntakeExecutor
+            if not hasattr(context, 'original_message') or not context.original_message:
+                logger.warning(f"_apply_regex_fallback - original_message missing: {repr(getattr(context, 'original_message', 'NOT SET'))}")
+                return
+            text = context.original_message.strip()
+        
+        text = text.strip()
         logger.debug(f"_apply_regex_fallback - text: {repr(text)}")
         
         if not text:
@@ -178,9 +243,33 @@ class IdentityExtractorExecutor(Executor):
         
         # Must have exactly 3 comma-separated parts for strict format extraction
         if len(parts) != 3:
-            logger.debug(f"_apply_regex_fallback - not exactly 3 parts, trying flexible extraction")
-            # Try flexible extraction: look for email and extract names from surrounding context
-            if email_match:
+            logger.debug(f"_apply_regex_fallback - not exactly 3 parts, trying natural language patterns")
+            # Try natural language patterns for German phrases
+            # First, try to extract names using natural language patterns
+            for pattern in self._NATURAL_NAME_PATTERNS:
+                match = pattern.search(text)
+                if match:
+                    if "vorname" in missing and not context.vorname and match.group("vorname"):
+                        context.vorname = match.group("vorname").strip()
+                        logger.debug(f"_apply_regex_fallback - extracted vorname (natural): {context.vorname}")
+                    if "name" in missing and not context.name and match.group("name"):
+                        context.name = match.group("name").strip()
+                        logger.debug(f"_apply_regex_fallback - extracted name (natural): {context.name}")
+                    if context.vorname or context.name:
+                        break  # Found names, stop trying other patterns
+            
+            # Try to extract email using natural language patterns (if not already extracted)
+            if "email" in missing and not context.email:
+                for pattern in self._NATURAL_EMAIL_PATTERNS:
+                    match = pattern.search(text)
+                    if match:
+                        extracted_email = match.group("email").lower()
+                        context.email = extracted_email
+                        logger.debug(f"_apply_regex_fallback - extracted email (natural): {extracted_email}")
+                        break
+            
+            # If we still don't have names but have email, try flexible extraction from comma-separated parts
+            if email_match and (("name" in missing and not context.name) or ("vorname" in missing and not context.vorname)):
                 email_text = email_match.group(0)
                 # Remove email from text and try to extract names
                 text_without_email = text.replace(email_text, "").strip()
@@ -188,13 +277,14 @@ class IdentityExtractorExecutor(Executor):
                 name_parts = [p.strip() for p in text_without_email.split(",") if p.strip()]
                 if len(name_parts) >= 2:
                     # Assume first is name, second is vorname (common German format)
-                    if "name" in missing and name_parts[0]:
+                    if "name" in missing and not context.name and name_parts[0]:
                         context.name = name_parts[0]
                         logger.debug(f"_apply_regex_fallback - extracted name (flexible): {context.name}")
-                    if "vorname" in missing and len(name_parts) > 1 and name_parts[1]:
+                    if "vorname" in missing and not context.vorname and len(name_parts) > 1 and name_parts[1]:
                         context.vorname = name_parts[1]
                         logger.debug(f"_apply_regex_fallback - extracted vorname (flexible): {context.vorname}")
-            logger.debug(f"_apply_regex_fallback - final context after flexible: name={context.name}, vorname={context.vorname}, email={context.email}")
+            
+            logger.debug(f"_apply_regex_fallback - final context after natural/flexible: name={context.name}, vorname={context.vorname}, email={context.email}")
             return
         
         # Find which part is the email
