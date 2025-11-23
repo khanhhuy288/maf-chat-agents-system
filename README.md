@@ -51,11 +51,11 @@ uv run --prerelease=allow obungi-chat-agents-system
 ![Dev UI execution timeline](2025-11-19_15-19-31.png)
 
 ```
-uv run --prerelease=allow obungi-chat-agents-system-devui --auto-open --simulate-dispatch
+uv run --prerelease=allow obungi-chat-agents-system-devui --auto-open
 ```
-- Registers the “Ticket Workflow” inside the Microsoft Agent Framework Dev UI.
+- Registers the "Ticket Workflow" inside the Microsoft Agent Framework Dev UI.
 - Lets reviewers inspect each agent step, streamed responses, and dispatcher payloads.
-- `--simulate-dispatch` keeps demos safe by bypassing the actual Logic App.
+- By default, dispatch is simulated (no actual POST requests are sent). Use `--enable-dispatch` to send real requests to the Logic App.
 
 ### Sample Cases (scripted demo)
 ```

@@ -39,7 +39,7 @@ CASES: dict[str, TicketInput] = {
 
 
 async def run_case(case_id: str, ticket: TicketInput) -> None:
-    workflow = create_ticket_workflow(dry_run_dispatch=True)
+    workflow = create_ticket_workflow()
     result = await workflow.run(ticket)
     outputs = result.get_outputs()
     response = outputs[-1] if outputs else None

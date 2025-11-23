@@ -21,7 +21,7 @@ class DispatcherExecutor(Executor):
     }
 
     def __init__(
-        self, logic_app_url: str, id: str = "dispatcher", simulate_only: bool = False
+        self, logic_app_url: str, id: str = "dispatcher", simulate_only: bool = True
     ) -> None:
         super().__init__(id=id)
         self.logic_app_url = logic_app_url

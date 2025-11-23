@@ -6,7 +6,10 @@ from typing import Sequence
 
 from agent_framework.devui import serve
 
-from obungi_chat_agents_system.workflow import create_ticket_workflow
+from obungi_chat_agents_system.workflow import (
+    create_conversational_agent,
+    create_ticket_workflow,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
@@ -36,11 +39,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Allow an additional CORS origin. Can be supplied multiple times.",
     )
     parser.add_argument(
-        "--simulate-dispatch",
+        "--enable-dispatch",
         action="store_true",
         help=(
-            "Skip HTTP calls to the Logic App dispatcher. "
-            "Useful for development when the backend endpoint is unavailable."
+            "Enable HTTP calls to the Logic App dispatcher. "
+            "By default, dispatch is simulated (no actual POST requests are sent)."
         ),
     )
     parser.add_argument(
@@ -56,17 +59,22 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    workflow = create_ticket_workflow(dry_run_dispatch=args.simulate_dispatch)
+    simulate_dispatch = not args.enable_dispatch
+    workflow = create_ticket_workflow(simulate_dispatch=simulate_dispatch)
+    conversational_agent = create_conversational_agent(simulate_dispatch=simulate_dispatch)
+
     logging.info(
-        "Launching Dev UI for workflow '%s' on %s:%s (simulate_dispatch=%s)",
+        "Launching Dev UI with workflow '%s' and conversational agent on %s:%s (simulate_dispatch=%s)",
         workflow.name or "Ticket Workflow",
         args.host,
         args.port,
-        args.simulate_dispatch,
+        simulate_dispatch,
     )
 
+    # Serve both the workflow and the conversational agent
+    # The agent will appear in DevUI and can be interacted with conversationally
     serve(
-        entities=[workflow],
+        entities=[workflow, conversational_agent],
         host=args.host,
         port=args.port,
         auto_open=args.auto_open,

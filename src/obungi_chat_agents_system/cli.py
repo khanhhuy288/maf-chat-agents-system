@@ -141,9 +141,9 @@ async def _cycle_status(status: Status, messages: Sequence[str]) -> None:
 
 
 async def run_ticket_flow(
-    ticket_input: TicketInput, *, dry_run_dispatch: bool
+    ticket_input: TicketInput, *, simulate_dispatch: bool = True
 ) -> TicketResponse | None:
-    workflow = create_ticket_workflow(dry_run_dispatch=dry_run_dispatch)
+    workflow = create_ticket_workflow(simulate_dispatch=simulate_dispatch)
     with console.status(
         "[bold cyan]Workflow wird gestartet …[/bold cyan]", spinner="dots"
     ) as status:
@@ -195,9 +195,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="CLI für das Ticket-Workflow-System."
     )
     parser.add_argument(
-        "--simulate-dispatch",
+        "--enable-dispatch",
         action="store_true",
-        help="HTTP-POSTs an die Logic App überspringen (nur Simulation).",
+        help="HTTP-POSTs an die Logic App aktivieren (standardmäßig deaktiviert).",
     )
     return parser.parse_args(argv)
 
@@ -228,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             try:
                 response = asyncio.run(
                     run_ticket_flow(
-                        ticket_input, dry_run_dispatch=args.simulate_dispatch
+                        ticket_input, simulate_dispatch=not args.enable_dispatch
                     )
                 )
             except KeyboardInterrupt:

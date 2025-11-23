@@ -5,7 +5,7 @@ from obungi_chat_agents_system.schemas import TicketCategory, TicketContext, Tic
 
 HISTORIAN_PROMPT = (
     "Du bist ein freundlicher Support-Agent. Beantworte Fragen zur Geschichte der KI in einfacher, "
-    "leicht verständlicher Sprache auf Deutsch. Verwende höchstens zwei kurze Absätze."
+    "leicht verständlicher Sprache auf Deutsch."
 )
 
 
@@ -25,8 +25,11 @@ class HistorianExecutor(Executor):
             return
 
         prompt = context.cleaned_request or context.original_message
+        # Use run() - response.text already aggregates all text content from the stream
+        # The conversational agent in DevUI will handle streaming when it generates its response
         response = await self.agent.run(prompt)
-        context.response = response.text.strip()
+        # response.text contains the complete aggregated text from all streaming updates
+        context.response = response.text.strip() if response.text else ""
 
         await ctx.send_message(context)
 
