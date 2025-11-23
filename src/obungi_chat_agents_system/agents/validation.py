@@ -30,16 +30,14 @@ class ValidationExecutor(Executor):
         if missing_attrs:
             # Always ask for all three fields if any are missing
             # Use the exact format that IdentityExtractorExecutor expects: "Name, Vorname, E-Mail-Adresse"
-            all_labels = [self.REQUIRED_FIELDS[attr] for attr in self.REQUIRED_FIELDS]
-            human_list = ", ".join(all_labels)
-            message = (
-                "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
-                f"Beispiel: Müller, Hans, hans@example.com"
-            )
+            all_labels = list(self.REQUIRED_FIELDS.values())
             await ctx.yield_output(
                 TicketResponse(
                     status="missing_identity",
-                    message=message,
+                    message=(
+                        "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
+                        "Beispiel: Müller, Hans, hans@example.com"
+                    ),
                     metadata={
                         "missing_fields": list(self.REQUIRED_FIELDS.keys()),
                         "missing_labels": all_labels,

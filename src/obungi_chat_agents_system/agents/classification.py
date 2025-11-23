@@ -1,10 +1,10 @@
-import json
 from typing import Any
 
 from agent_framework import Executor, WorkflowContext, handler
 from agent_framework.azure import AzureOpenAIChatClient
 
 from obungi_chat_agents_system.schemas import TicketCategory, TicketContext, TicketResponse
+from obungi_chat_agents_system.utils import parse_json_response
 
 
 CLASSIFICATION_PROMPT = """Du bist ein Service-Dispatcher. Analysiere die folgende Anfrage und ordne sie exakt einer der Kategorien zu:
@@ -43,7 +43,7 @@ class ClassificationExecutor(Executor):
             f"Anfrage:\n{context.original_message}"
         )
         response = await self.agent.run(payload)
-        parsed = self._parse_response(response.text)
+        parsed = parse_json_response(response.text)
 
         context.summary = parsed.get("summary") or "Ticket"
         context.summary = self._enforce_summary_limit(context.summary)
@@ -51,21 +51,6 @@ class ClassificationExecutor(Executor):
         context.category = self._map_category(parsed.get("category"))
 
         await ctx.send_message(context)
-
-    def _parse_response(self, content: str) -> dict[str, Any]:
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            # Attempt to locate JSON substring
-            start = content.find("{")
-            end = content.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                fragment = content[start : end + 1]
-                try:
-                    return json.loads(fragment)
-                except json.JSONDecodeError:
-                    pass
-        return {}
 
     @staticmethod
     def _enforce_summary_limit(summary: str) -> str:
