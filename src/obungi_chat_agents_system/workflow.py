@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
+import threading
 from typing import Any
 
 from agent_framework import AgentExecutor, ChatAgent, Workflow, WorkflowBuilder
@@ -17,6 +20,29 @@ from obungi_chat_agents_system.agents import (
 )
 from obungi_chat_agents_system.config import settings
 from obungi_chat_agents_system.schemas import TicketInput, TicketResponse
+
+# Thread-safe state tracking for identity requests
+# Maps state_key (hash of original message or thread_id) -> {"waiting_for_identity": bool, "original_message": str | None}
+_identity_state: dict[str, dict[str, Any]] = {}
+_state_lock = threading.Lock()
+
+# Pattern to match the required identity format: "Name, Vorname, E-Mail-Adresse"
+_IDENTITY_FORMAT_PATTERN = re.compile(
+    r"^[^,]+,\s*[^,]+,\s*[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
+    re.IGNORECASE
+)
+
+
+def _get_state_key(thread_id: str | None, message: str | None = None) -> str:
+    """Generate a state key from thread_id or message hash."""
+    if thread_id:
+        return f"thread_{thread_id}"
+    elif message:
+        # Use hash of message as fallback
+        message_hash = hashlib.md5(message.encode()).hexdigest()
+        return f"msg_{message_hash}"
+    else:
+        return "default"
 
 
 def create_chat_client() -> AzureOpenAIChatClient:
@@ -49,6 +75,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
     def process_ticket(
         message: str,
         original_message: str | None = None,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
         """Verarbeitet eine Ticket-Anfrage durch das Workflow-System.
         
@@ -62,10 +89,11 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
                    Wenn 'original_message' None ist, sollte 'message' die vollständige Anfrage enthalten.
             original_message: (Optional) Die ursprüngliche Anfrage, für die Identitätsinformationen fehlten.
                            Wenn angegeben, wird diese mit 'message' (Identitätsinformationen) kombiniert.
+            thread_id: (Optional) Die Thread-ID für die Konversation. Wird für State-Tracking verwendet.
         
         Returns:
             Ein Dictionary mit Status, Nachricht und Metadaten der Verarbeitung:
-            - status: 'missing_identity', 'unsupported', 'completed', oder 'error'
+            - status: 'missing_identity', 'unsupported', 'completed', 'waiting_for_identity', oder 'error'
             - message: Die Antwortnachricht vom Workflow
             - is_historian_answer: (Optional) True wenn die 'message' die direkte Historian-Antwort ist
             - direct_answer: (Optional) Die direkte Antwort vom Historian (falls is_historian_answer=True)
@@ -83,6 +111,48 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
         - Füge KEINE zusätzlichen Texte hinzu wie 'Ihr Ticket wurde erfolgreich...'
         - Die Antwort ist bereits vollständig und beantwortet die Frage des Benutzers
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Determine state key: use thread_id if provided, otherwise use message hash
+        # If original_message is provided, use it to find the state
+        state_key = None
+        if original_message:
+            # When original_message is provided, find the state by the original message hash
+            state_key = _get_state_key(thread_id, original_message)
+        else:
+            # For new messages, use thread_id or message hash
+            state_key = _get_state_key(thread_id, message)
+        
+        # Get current state for this thread/message
+        with _state_lock:
+            thread_state = _identity_state.get(state_key, {
+                "waiting_for_identity": False,
+                "original_message": None,
+            })
+        
+        # If we're waiting for identity and original_message is not provided,
+        # check if the message matches the required format
+        if thread_state["waiting_for_identity"] and not original_message:
+            # Check if message matches the required format: "Name, Vorname, E-Mail-Adresse"
+            message_stripped = message.strip()
+            if not _IDENTITY_FORMAT_PATTERN.match(message_stripped):
+                # Reject the query - we're still waiting for identity in the correct format
+                logger.debug(f"Rejecting query - waiting for identity but message doesn't match format: {repr(message)}")
+                return {
+                    "status": "waiting_for_identity",
+                    "message": (
+                        "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
+                        "Beispiel: Müller, Hans, hans@example.com\n\n"
+                        "Ich kann Ihre Anfrage erst bearbeiten, nachdem Sie Ihre Identitätsinformationen "
+                        "im korrekten Format bereitgestellt haben."
+                    ),
+                    "metadata": {
+                        "waiting_for_identity": True,
+                        "original_message": thread_state["original_message"],
+                    },
+                }
+        
         # If original_message is provided, combine it with the current message (identity info)
         # This handles the case where the user provides identity in a follow-up message
         if original_message:
@@ -99,10 +169,9 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
         ticket_input = TicketInput(message=combined_message)
         
         # Debug logging
-        import logging
-        logger = logging.getLogger(__name__)
         logger.debug(f"process_ticket called with message: {repr(message)}")
         logger.debug(f"ticket_input.message: {repr(ticket_input.message)}")
+        logger.debug(f"thread_state: {thread_state}")
         
         try:
             # Run the async workflow in a new event loop or use the existing one
@@ -136,6 +205,29 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             if original_message:
                 metadata["original_message"] = original_message
             
+            # Update state based on result
+            with _state_lock:
+                if result.status == "missing_identity":
+                    # We're now waiting for identity - store state
+                    # Use the combined_message (or original if provided) as the key
+                    original_msg = combined_message if not original_message else original_message
+                    state_key_for_storage = _get_state_key(thread_id, original_msg)
+                    _identity_state[state_key_for_storage] = {
+                        "waiting_for_identity": True,
+                        "original_message": original_msg,
+                    }
+                    logger.debug(f"Set waiting_for_identity=True for state_key {state_key_for_storage}")
+                elif result.status == "completed":
+                    # Identity is complete - clear waiting state for this key and related keys
+                    # Clear all states that might be related (by checking if original_message matches)
+                    keys_to_remove = []
+                    for key, state in _identity_state.items():
+                        if state.get("original_message") == combined_message or state.get("original_message") == original_message:
+                            keys_to_remove.append(key)
+                    for key in keys_to_remove:
+                        del _identity_state[key]
+                    logger.debug(f"Cleared waiting_for_identity for {len(keys_to_remove)} state(s)")
+            
             # For AI history questions, the message IS the answer from HistorianExecutor
             # Make this explicit in the response
             response = {
@@ -158,7 +250,8 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             }
     
     return chat_client.create_agent(
-        name="Ticket Support Agent",
+        name="ticket-support-agent",
+        description="IT-Support-Assistent für das Obungi Ticket-System",
         instructions=(
             "Du bist ein freundlicher IT-Support-Assistent für das Obungi Ticket-System. "
             "Du hilfst Benutzern bei IT-Anfragen und verarbeitest diese durch ein internes Workflow-System.\n\n"
@@ -179,12 +272,15 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             "     * Beispiel: Wenn message='Die Entwicklung von Chatbots begann mit ELIZA...', dann antworte genau mit diesem Text\n\n"
             "   - Wenn 'status' = 'completed' UND 'metadata.category' != 'Frage zur Historie von AI':\n"
             "     * Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n\n"
-            "   - Wenn 'status' = 'missing_identity':\n"
+            "   - Wenn 'status' = 'missing_identity' ODER 'status' = 'waiting_for_identity':\n"
             "     * MERKE DIR die ursprüngliche Anfrage des Benutzers (die Nachricht, die du an 'process_ticket' übergeben hast)\n"
             "     * Frage IMMER nach ALLEN drei Feldern: Name, Vorname, E-Mail-Adresse\n"
-            "     * Verwende die Labels aus 'metadata.missing_labels' für die Frage\n"
+            "     * Verwende die Labels aus 'metadata.missing_labels' für die Frage (falls vorhanden)\n"
             "     * WICHTIG: Bitte den Benutzer, die Informationen im Format 'Name, Vorname, E-Mail-Adresse' anzugeben (komma-getrennt)\n"
             "     * Beispiel: 'Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. Beispiel: Müller, Hans, hans@example.com'\n"
+            "     * KRITISCH: Wenn der Benutzer eine NEUE Anfrage stellt (nicht im Format 'Name, Vorname, E-Mail-Adresse'),\n"
+            "       dann rufe 'process_ticket' NICHT auf. Stattdessen erinnere den Benutzer daran, dass er zuerst\n"
+            "       seine Identitätsinformationen im korrekten Format bereitstellen muss.\n"
             "     * Wenn der Benutzer die Identitätsinformationen liefert (z.B. 'Tran, Huy, khanhhuy288@gmail.com'):\n"
             "       → Rufe 'process_ticket' erneut auf mit:\n"
             "         - message: Die Identitätsinformationen vom Benutzer (z.B. 'Tran, Huy, khanhhuy288@gmail.com')\n"
@@ -218,9 +314,11 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             "              → Keine zusätzlichen Texte, keine Umformulierung\n"
             "   Schritt 2b: Wenn 'status' = 'completed' UND category != 'Frage zur Historie von AI':\n"
             "              → Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n"
-            "   Schritt 2c: Wenn 'status' = 'missing_identity':\n"
+            "   Schritt 2c: Wenn 'status' = 'missing_identity' ODER 'status' = 'waiting_for_identity':\n"
             "              → MERKE DIR die ursprüngliche Nachricht (die du an 'process_ticket' übergeben hast)\n"
             "              → Frage nach ALLEN drei Feldern im Format 'Name, Vorname, E-Mail-Adresse'\n"
+            "              → KRITISCH: Wenn der Benutzer eine NEUE Anfrage stellt (nicht im Format), rufe 'process_ticket' NICHT auf.\n"
+            "                Erinnere stattdessen den Benutzer daran, zuerst Identitätsinformationen bereitzustellen.\n"
             "              → Wenn der Benutzer Identitätsinformationen liefert, rufe 'process_ticket' auf mit:\n"
             "                 message=<Identitätsinformationen>, original_message=<ursprüngliche Nachricht>\n"
             "   Schritt 2d: Wenn 'status' = 'unsupported':\n"
