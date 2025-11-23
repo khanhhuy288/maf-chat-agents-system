@@ -19,22 +19,30 @@ class ValidationExecutor(Executor):
     async def handle(
         self, context: TicketContext, ctx: WorkflowContext[TicketContext, TicketResponse]
     ) -> None:
+        """Validate that all required identity fields are present.
+        
+        This executor implements a human-in-the-loop pattern: if identity fields are missing,
+        it yields a response asking the user to provide them, and the workflow stops until
+        the user provides the information in a follow-up message.
+        """
         missing_attrs = [attr for attr in self.REQUIRED_FIELDS if not getattr(context, attr)]
-        missing_labels = [self.REQUIRED_FIELDS[attr] for attr in missing_attrs]
 
         if missing_attrs:
-            human_list = ", ".join(missing_labels)
+            # Always ask for all three fields if any are missing
+            # Use the exact format that IdentityExtractorExecutor expects: "Name, Vorname, E-Mail-Adresse"
+            all_labels = [self.REQUIRED_FIELDS[attr] for attr in self.REQUIRED_FIELDS]
+            human_list = ", ".join(all_labels)
             message = (
-                "Bitte ergänzen Sie folgende Angaben, damit wir Ihr Ticket verarbeiten können: "
-                f"{human_list}."
+                "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
+                f"Beispiel: Müller, Hans, hans@example.com"
             )
             await ctx.yield_output(
                 TicketResponse(
                     status="missing_identity",
                     message=message,
                     metadata={
-                        "missing_fields": missing_attrs,
-                        "missing_labels": missing_labels,
+                        "missing_fields": list(self.REQUIRED_FIELDS.keys()),
+                        "missing_labels": all_labels,
                     },
                 )
             )

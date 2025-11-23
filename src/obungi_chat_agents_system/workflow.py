@@ -48,6 +48,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
     # Note: This function must be synchronous, so we use asyncio.run to execute the async workflow
     def process_ticket(
         message: str,
+        original_message: str | None = None,
     ) -> dict[str, Any]:
         """Verarbeitet eine Ticket-Anfrage durch das Workflow-System.
         
@@ -55,7 +56,12 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
         aus der Nachricht. Du musst diese nicht selbst extrahieren.
         
         Args:
-            message: Die vollständige Benutzeranfrage oder Nachricht (inklusive aller Identitätsinformationen)
+            message: Die aktuelle Benutzeranfrage oder Nachricht.
+                   Wenn 'original_message' angegeben ist, sollte 'message' die Identitätsinformationen enthalten
+                   (z.B. "Tran, Huy, khanhhuy288@gmail.com").
+                   Wenn 'original_message' None ist, sollte 'message' die vollständige Anfrage enthalten.
+            original_message: (Optional) Die ursprüngliche Anfrage, für die Identitätsinformationen fehlten.
+                           Wenn angegeben, wird diese mit 'message' (Identitätsinformationen) kombiniert.
         
         Returns:
             Ein Dictionary mit Status, Nachricht und Metadaten der Verarbeitung:
@@ -67,6 +73,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
               * category: Die Kategorie der Anfrage ('Frage zur Historie von AI', 'O365 Frage', etc.)
               * missing_fields: Liste fehlender Felder (wenn status='missing_identity')
               * missing_labels: Labels für fehlende Felder (wenn status='missing_identity')
+              * original_message: (Optional) Die ursprüngliche Anfrage, wenn identity fehlte
             - payload: Optional versendetes Payload (wenn Ticket erstellt wurde)
             
         WICHTIGE REGEL FÜR AI-HISTORIE-FRAGEN:
@@ -76,8 +83,26 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
         - Füge KEINE zusätzlichen Texte hinzu wie 'Ihr Ticket wurde erfolgreich...'
         - Die Antwort ist bereits vollständig und beantwortet die Frage des Benutzers
         """
-        # Pass only the message - let the workflow's IdentityExtractorExecutor handle extraction
-        ticket_input = TicketInput(message=message)
+        # If original_message is provided, combine it with the current message (identity info)
+        # This handles the case where the user provides identity in a follow-up message
+        if original_message:
+            # Combine: original request + identity information
+            # Format: original message, then a separator, then identity info
+            # This allows IdentityExtractorExecutor to extract from the identity part
+            # while preserving the original request for classification
+            combined_message = f"{original_message}\n\n---\n{message}"
+        else:
+            # Normal case: message contains everything
+            combined_message = message
+        
+        # Pass the combined message - let the workflow's IdentityExtractorExecutor handle extraction
+        ticket_input = TicketInput(message=combined_message)
+        
+        # Debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"process_ticket called with message: {repr(message)}")
+        logger.debug(f"ticket_input.message: {repr(ticket_input.message)}")
         
         try:
             # Run the async workflow in a new event loop or use the existing one
@@ -106,6 +131,10 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             # Build response with explicit category information
             metadata = result.metadata or {}
             category = metadata.get("category", "")
+            
+            # Store original_message in metadata if it was provided, so the agent can remember it
+            if original_message:
+                metadata["original_message"] = original_message
             
             # For AI history questions, the message IS the answer from HistorianExecutor
             # Make this explicit in the response
@@ -151,10 +180,16 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             "   - Wenn 'status' = 'completed' UND 'metadata.category' != 'Frage zur Historie von AI':\n"
             "     * Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n\n"
             "   - Wenn 'status' = 'missing_identity':\n"
-            "     * Frage höflich nach den fehlenden Feldern (siehe 'metadata.missing_fields')\n"
+            "     * MERKE DIR die ursprüngliche Anfrage des Benutzers (die Nachricht, die du an 'process_ticket' übergeben hast)\n"
+            "     * Frage IMMER nach ALLEN drei Feldern: Name, Vorname, E-Mail-Adresse\n"
             "     * Verwende die Labels aus 'metadata.missing_labels' für die Frage\n"
-            "     * Beispiel: 'Bitte geben Sie noch Ihre E-Mail-Adresse an.'\n"
-            "     * Wenn der Benutzer die fehlenden Informationen liefert, rufe 'process_ticket' erneut mit der vollständigen Nachricht auf\n\n"
+            "     * WICHTIG: Bitte den Benutzer, die Informationen im Format 'Name, Vorname, E-Mail-Adresse' anzugeben (komma-getrennt)\n"
+            "     * Beispiel: 'Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. Beispiel: Müller, Hans, hans@example.com'\n"
+            "     * Wenn der Benutzer die Identitätsinformationen liefert (z.B. 'Tran, Huy, khanhhuy288@gmail.com'):\n"
+            "       → Rufe 'process_ticket' erneut auf mit:\n"
+            "         - message: Die Identitätsinformationen vom Benutzer (z.B. 'Tran, Huy, khanhhuy288@gmail.com')\n"
+            "         - original_message: Die ursprüngliche Anfrage, die du dir gemerkt hast\n"
+            "     * Dies stellt sicher, dass die ursprüngliche Anfrage zusammen mit den Identitätsinformationen verarbeitet wird\n\n"
             "   - Wenn 'status' = 'unsupported':\n"
             "     * Sage höflich: 'Leider kann ich bei dieser Anfrage nicht helfen.'\n\n"
             "   - Wenn 'status' = 'error':\n"
@@ -166,8 +201,16 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             "   - Wenn du nach Informationen fragst, sei spezifisch und verwende die exakten Feldnamen aus metadata\n\n"
             "4. **Workflow-Integration:**\n"
             "   - Nutze IMMER die 'process_ticket' Funktion für alle Anfragen\n"
-            "   - Übergebe immer die vollständige Benutzernachricht - das Workflow-System extrahiert automatisch alle benötigten Informationen\n"
-            "   - Wenn Identitätsinformationen fehlen, sammle sie im Gespräch und rufe dann 'process_ticket' erneut mit der vollständigen Nachricht auf\n\n"
+            "   - Für die ERSTE Anfrage: Übergebe nur 'message' mit der vollständigen Benutzernachricht\n"
+            "   - Wenn 'status' = 'missing_identity' zurückkommt:\n"
+            "     * MERKE DIR die ursprüngliche Nachricht (die du an 'process_ticket' übergeben hast)\n"
+            "     * Frage den Benutzer nach Identitätsinformationen\n"
+            "   - Wenn der Benutzer Identitätsinformationen liefert:\n"
+            "     * Rufe 'process_ticket' auf mit:\n"
+            "       - message: Die Identitätsinformationen (z.B. 'Tran, Huy, khanhhuy288@gmail.com')\n"
+            "       - original_message: Die ursprüngliche Anfrage, die du dir gemerkt hast\n"
+            "   - Das Workflow-System kombiniert automatisch die ursprüngliche Anfrage mit den Identitätsinformationen\n"
+            "   - WICHTIG: Identitätsinformationen MÜSSEN im Format 'Name, Vorname, E-Mail-Adresse' (komma-getrennt) vorliegen\n\n"
             "5. **ENTSCHEIDUNGSBAUM nach process_ticket Aufruf:**\n"
             "   Schritt 1: Prüfe 'is_historian_answer' oder 'metadata.category'\n"
             "   Schritt 2a: Wenn 'is_historian_answer' = True ODER 'metadata.category' = 'Frage zur Historie von AI':\n"
@@ -176,7 +219,10 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             "   Schritt 2b: Wenn 'status' = 'completed' UND category != 'Frage zur Historie von AI':\n"
             "              → Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n"
             "   Schritt 2c: Wenn 'status' = 'missing_identity':\n"
-            "              → Frage nach fehlenden Feldern\n"
+            "              → MERKE DIR die ursprüngliche Nachricht (die du an 'process_ticket' übergeben hast)\n"
+            "              → Frage nach ALLEN drei Feldern im Format 'Name, Vorname, E-Mail-Adresse'\n"
+            "              → Wenn der Benutzer Identitätsinformationen liefert, rufe 'process_ticket' auf mit:\n"
+            "                 message=<Identitätsinformationen>, original_message=<ursprüngliche Nachricht>\n"
             "   Schritt 2d: Wenn 'status' = 'unsupported':\n"
             "              → Sage: 'Leider kann ich bei dieser Anfrage nicht helfen.'\n"
             "   Schritt 2e: Wenn 'status' = 'error':\n"
