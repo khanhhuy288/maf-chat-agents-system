@@ -13,14 +13,12 @@ class ResponseFormatterExecutor(Executor):
     async def handle(
         self, context: TicketContext, ctx: WorkflowContext[TicketContext, TicketResponse]
     ) -> None:
+        # Only include metadata that's not already in dispatch_payload
+        # dispatch_payload contains: name, vorname, email, kategorie, zusammenfassung, anfrage
+        # We keep category and summary here for quick access, but avoid full duplication
         metadata = {
-            "name": context.name,
-            "vorname": context.vorname,
-            "email": context.email,
-            "original_message": context.original_message,
             "category": context.category.value if context.category else None,
             "summary": context.summary,
-            "dispatch_payload": context.dispatch_payload,
         }
 
         if context.category == TicketCategory.OTHER:

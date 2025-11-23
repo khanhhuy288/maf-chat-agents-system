@@ -45,7 +45,7 @@ _CONVERSATIONAL_AGENT_INSTRUCTIONS = (
     "2. **Antworten basierend auf Workflow-Ergebnis - KRITISCH:**\n"
     "   Nach jedem 'process_ticket' Aufruf MUSS du zuerst prüfen:\n"
     "   - Wenn 'is_historian_answer' = True ODER ('status' = 'completed' UND 'metadata.category' = 'Frage zur Historie von AI'):\n"
-    "     * Die 'message' (oder 'direct_answer' falls vorhanden) ist die DIREKTE Antwort vom Historian-Executor\n"
+    "     * Die 'message' ist die DIREKTE Antwort vom Historian-Executor\n"
     "     * Du MUSST diese Antwort EXAKT so an den Benutzer weitergeben, ohne Änderungen\n"
     "     * Füge KEINE zusätzlichen Texte hinzu wie 'Ihr Ticket wurde...' oder 'Ihr Ticket wurde erfolgreich...'\n"
     "     * Die Antwort enthält bereits die vollständige Antwort auf die AI-Historie-Frage\n"
@@ -91,7 +91,7 @@ _CONVERSATIONAL_AGENT_INSTRUCTIONS = (
     "5. **ENTSCHEIDUNGSBAUM nach process_ticket Aufruf:**\n"
     "   Schritt 1: Prüfe 'is_historian_answer' oder 'metadata.category'\n"
     "   Schritt 2a: Wenn 'is_historian_answer' = True ODER 'metadata.category' = 'Frage zur Historie von AI':\n"
-    "              → Verwende 'direct_answer' (falls vorhanden) oder 'message' EXAKT so\n"
+    "              → Verwende 'message' EXAKT so\n"
     "              → Keine zusätzlichen Texte, keine Umformulierung\n"
     "   Schritt 2b: Wenn 'status' = 'completed' UND category != 'Frage zur Historie von AI':\n"
     "              → Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n"
@@ -187,7 +187,6 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             - status: 'missing_identity', 'unsupported', 'completed', 'waiting_for_identity', oder 'error'
             - message: Die Antwortnachricht vom Workflow
             - is_historian_answer: (Optional) True wenn die 'message' die direkte Historian-Antwort ist
-            - direct_answer: (Optional) Die direkte Antwort vom Historian (falls is_historian_answer=True)
             - metadata: Zusätzliche Metadaten mit folgenden Feldern:
               * category: Die Kategorie der Anfrage ('Frage zur Historie von AI', 'O365 Frage', etc.)
               * missing_fields: Liste fehlender Felder (wenn status='missing_identity')
@@ -197,7 +196,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             
         WICHTIGE REGEL FÜR AI-HISTORIE-FRAGEN:
         Wenn 'is_historian_answer' = True ODER 'metadata.category' = 'Frage zur Historie von AI':
-        - Die 'message' (oder 'direct_answer') ist die KOMPLETTE Antwort vom Historian-Executor
+        - Die 'message' ist die KOMPLETTE Antwort vom Historian-Executor
         - Diese Antwort muss EXAKT so an den Benutzer weitergegeben werden, OHNE Änderungen
         - Füge KEINE zusätzlichen Texte hinzu wie 'Ihr Ticket wurde erfolgreich...'
         - Die Antwort ist bereits vollständig und beantwortet die Frage des Benutzers
@@ -330,9 +329,9 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             }
             
             # Add explicit flag for AI history to make it crystal clear
+            # The message field already contains the direct answer, no need to duplicate it
             if category == "Frage zur Historie von AI" and result.status == "completed":
                 response["is_historian_answer"] = True
-                response["direct_answer"] = result.message  # This is the answer to return directly
             
             return response
         except Exception as e:
