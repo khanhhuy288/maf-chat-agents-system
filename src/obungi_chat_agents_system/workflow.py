@@ -6,7 +6,7 @@ import re
 import threading
 from typing import Any
 
-from agent_framework import AgentExecutor, ChatAgent, Workflow, WorkflowBuilder
+from agent_framework import AgentExecutor, Case, ChatAgent, Default, Workflow, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 
 from obungi_chat_agents_system.agents import (
@@ -19,7 +19,12 @@ from obungi_chat_agents_system.agents import (
     ValidationExecutor,
 )
 from obungi_chat_agents_system.config import settings
-from obungi_chat_agents_system.schemas import TicketInput, TicketResponse
+from obungi_chat_agents_system.schemas import (
+    TicketCategory,
+    TicketContext,
+    TicketInput,
+    TicketResponse,
+)
 
 # Thread-safe state tracking for identity requests
 # Maps state_key (hash of original message or thread_id) -> {"waiting_for_identity": bool, "original_message": str | None}
@@ -361,17 +366,42 @@ def create_ticket_workflow(*, simulate_dispatch: bool = True) -> Workflow:
     )
     formatter = ResponseFormatterExecutor()
 
+    # Condition functions for routing
+    def is_ai_history(context: TicketContext) -> bool:
+        """Check if ticket is AI history category."""
+        return context.category == TicketCategory.AI_HISTORY if context.category else False
+
+    def is_dispatchable(context: TicketContext) -> bool:
+        """Check if ticket should be dispatched (O365, HARDWARE, LOGIN)."""
+        if not context.category:
+            return False
+        return context.category in {
+            TicketCategory.O365,
+            TicketCategory.HARDWARE,
+            TicketCategory.LOGIN,
+        }
+
     workflow = (
         WorkflowBuilder(
             name="Ticket Workflow",
-            description="Sequential intake, classification, historian, dispatcher and formatter pipeline.",
+            description="Branching workflow with category-based routing after classification.",
         )
         .set_start_executor(intake)
         .add_edge(intake, identity)
         .add_edge(identity, validation)
         .add_edge(validation, classification)
-        .add_edge(classification, historian)
+        # Branch after classification based on category
+        .add_switch_case_edge_group(
+            classification,
+            [
+                Case(condition=is_ai_history, target=historian),
+                Case(condition=is_dispatchable, target=dispatcher),
+                Default(target=formatter),  # OTHER category - early exit
+            ],
+        )
+        # AI_HISTORY path: historian → dispatcher → formatter
         .add_edge(historian, dispatcher)
+        # All dispatched paths converge to formatter
         .add_edge(dispatcher, formatter)
         .build()
     )
