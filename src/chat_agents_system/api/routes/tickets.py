@@ -11,9 +11,10 @@ from pydantic import BaseModel, Field
 from chat_agents_system.schemas import TicketInput, TicketResponse
 from chat_agents_system.utils import get_logger
 from chat_agents_system.workflow import (
+    IDENTITY_FORMAT_PATTERN,
     create_ticket_workflow,
-    prepare_ticket_message,
-    update_identity_state,
+    get_thread_state,
+    set_thread_state,
 )
 
 logger = get_logger(__name__)
@@ -243,14 +244,42 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
     try:
         logger.info(f"Processing ticket request: message={request.message[:100]}...")
         
-        # Prepare message with state management (handles follow-up identity messages)
-        prepared_message, msg_metadata = prepare_ticket_message(
-            message=request.message,
-            thread_id=request.thread_id,
-            name=request.name,
-            vorname=request.vorname,
-            email=request.email,
-        )
+        # Simplified state management: use thread_id for conversation continuity
+        original_message: str | None = None
+        prepared_message = request.message
+        
+        # If identity fields are provided directly, use them and skip state check
+        if not (request.name or request.vorname or request.email) and request.thread_id:
+            # Check if we're waiting for identity in this thread
+            thread_state = get_thread_state(request.thread_id)
+            
+            if thread_state["waiting_for_identity"]:
+                # Check if message matches identity format
+                message_stripped = request.message.strip()
+                if IDENTITY_FORMAT_PATTERN.match(message_stripped):
+                    # This is identity information - combine with original message
+                    original_message = thread_state["original_message"]
+                    if original_message:
+                        prepared_message = f"{original_message}\n\n---\n{request.message}"
+                        logger.debug(f"Combining original message with identity info")
+                    else:
+                        logger.warning("State indicates waiting for identity but no original_message found")
+                else:
+                    # Still waiting for identity - return waiting status
+                    return TicketResponseModel(
+                        status="waiting_for_identity",
+                        message=(
+                            "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
+                            "Beispiel: Müller, Hans, hans@example.com\n\n"
+                            "Ich kann Ihre Anfrage erst bearbeiten, nachdem Sie Ihre Identitätsinformationen "
+                            "im korrekten Format bereitgestellt haben."
+                        ),
+                        metadata={
+                            "waiting_for_identity": True,
+                            "original_message": thread_state["original_message"],
+                            "thread_id": request.thread_id,
+                        },
+                    )
         
         # Create workflow instance
         workflow = create_ticket_workflow(simulate_dispatch=request.simulate_dispatch)
@@ -276,14 +305,17 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         # Get the final response (from ResponseFormatterExecutor)
         result: TicketResponse = outputs[-1]
         
-        # Update state based on result (similar to conversational agent)
-        if request.thread_id or msg_metadata.get("is_follow_up"):
-            update_identity_state(
-                status=result.status,
-                thread_id=request.thread_id,
-                original_message=msg_metadata.get("original_message"),
-                prepared_message=prepared_message,
-            )
+        # Update state based on result (simplified thread-based approach)
+        if request.thread_id:
+            if result.status == "missing_identity":
+                # Store original message for this thread
+                original_msg = original_message if original_message else prepared_message
+                set_thread_state(request.thread_id, waiting_for_identity=True, original_message=original_msg)
+                logger.debug(f"Set waiting_for_identity=True for thread_id {request.thread_id}")
+            elif result.status == "completed":
+                # Clear waiting state for this thread
+                set_thread_state(request.thread_id, waiting_for_identity=False)
+                logger.debug(f"Cleared waiting_for_identity for thread_id {request.thread_id}")
         
         logger.info(f"Ticket processed successfully: status={result.status}")
         
@@ -291,10 +323,9 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         response_metadata = result.metadata or {}
         if request.thread_id:
             response_metadata["thread_id"] = request.thread_id
-        if msg_metadata.get("waiting_for_identity"):
+        if result.status == "missing_identity" and original_message:
+            response_metadata["original_message"] = original_message
             response_metadata["waiting_for_identity"] = True
-            if msg_metadata.get("original_message"):
-                response_metadata["original_message"] = msg_metadata["original_message"]
         
         # Convert to response model
         return TicketResponseModel(

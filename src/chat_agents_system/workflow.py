@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import re
 import threading
 from typing import Any
@@ -14,7 +13,6 @@ from chat_agents_system.agents import (
     DispatcherExecutor,
     HistorianExecutor,
     IdentityExtractorExecutor,
-    IntakeExecutor,
     ResponseFormatterExecutor,
     ValidationExecutor,
 )
@@ -27,251 +25,139 @@ from chat_agents_system.schemas import (
 )
 from chat_agents_system.utils import get_logger
 
-# Thread-safe state tracking for identity requests
-# Maps state_key (hash of original message or thread_id) -> {"waiting_for_identity": bool, "original_message": str | None}
+# Simplified thread-based state tracking for identity requests
+# Uses Microsoft Agent Framework's conversation/thread management pattern
+# Maps thread_id -> {"waiting_for_identity": bool, "original_message": str | None}
+# Also tracks by message hash as fallback when thread_id is not available (DevUI)
 _identity_state: dict[str, dict[str, Any]] = {}
+_identity_state_by_message: dict[str, dict[str, Any]] = {}  # Fallback: message hash -> state
 _state_lock = threading.Lock()
 
 # Pattern to match the required identity format: "Name, Vorname, E-Mail-Adresse"
-_IDENTITY_FORMAT_PATTERN = re.compile(
+# Exported for use in API routes
+IDENTITY_FORMAT_PATTERN = re.compile(
     r"^[^,]+,\s*[^,]+,\s*[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
     re.IGNORECASE
 )
 
 # Instructions for the conversational agent
+# SIMPLIFIED: Agent always calls process_ticket, function handles all logic
 _CONVERSATIONAL_AGENT_INSTRUCTIONS = (
     "Du bist ein freundlicher IT-Support-Assistent für das Ticket-System. "
     "Du hilfst Benutzern bei IT-Anfragen und verarbeitest diese durch ein internes Workflow-System.\n\n"
     "WICHTIGE VERHALTENSREGELN:\n\n"
-    "1. **Anfragen verarbeiten:**\n"
-    "   - Wenn der Benutzer eine konkrete Anfrage stellt, verwende IMMER die Funktion 'process_ticket'\n"
-    "   - Übergebe NUR die vollständige Nachricht des Benutzers im 'message' Parameter\n"
-    "   - Extrahiere NICHT selbst Identitätsinformationen - das Workflow-System macht das automatisch\n"
-    "   - Die Funktion verarbeitet die Anfrage durch das Workflow-System, das automatisch Name, Vorname und E-Mail extrahiert\n\n"
-    "2. **Antworten basierend auf Workflow-Ergebnis - KRITISCH:**\n"
-    "   Nach jedem 'process_ticket' Aufruf MUSS du zuerst prüfen:\n"
-    "   - Wenn 'is_historian_answer' = True ODER ('status' = 'completed' UND 'metadata.category' = 'Frage zur Historie von AI'):\n"
-    "     * Die 'message' ist die DIREKTE Antwort vom Historian-Executor\n"
-    "     * Du MUSST diese Antwort EXAKT so an den Benutzer weitergeben, ohne Änderungen\n"
-    "     * Füge KEINE zusätzlichen Texte hinzu wie 'Ihr Ticket wurde...' oder 'Ihr Ticket wurde erfolgreich...'\n"
-    "     * Die Antwort enthält bereits die vollständige Antwort auf die AI-Historie-Frage\n"
-    "     * Kopiere die Antwort 1:1 - keine Umformulierung, keine Ergänzungen\n"
-    "     * Beispiel: Wenn message='Die Entwicklung von Chatbots begann mit ELIZA...', dann antworte genau mit diesem Text\n\n"
-    "   - Wenn 'status' = 'completed' UND 'metadata.category' != 'Frage zur Historie von AI':\n"
-    "     * Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n\n"
-    "   - Wenn 'status' = 'missing_identity' ODER 'status' = 'waiting_for_identity':\n"
-    "     * MERKE DIR die ursprüngliche Anfrage des Benutzers (die Nachricht, die du an 'process_ticket' übergeben hast)\n"
-    "     * Frage IMMER nach ALLEN drei Feldern: Name, Vorname, E-Mail-Adresse\n"
-    "     * Verwende die Labels aus 'metadata.missing_labels' für die Frage (falls vorhanden)\n"
-    "     * WICHTIG: Bitte den Benutzer, die Informationen im Format 'Name, Vorname, E-Mail-Adresse' anzugeben (komma-getrennt)\n"
-    "     * Beispiel: 'Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. Beispiel: Müller, Hans, hans@example.com'\n"
-    "     * KRITISCH: Wenn der Benutzer eine NEUE Anfrage stellt (nicht im Format 'Name, Vorname, E-Mail-Adresse'),\n"
-    "       dann rufe 'process_ticket' NICHT auf. Stattdessen erinnere den Benutzer daran, dass er zuerst\n"
-    "       seine Identitätsinformationen im korrekten Format bereitstellen muss.\n"
-    "     * KRITISCH: Wenn 'status' = 'waiting_for_identity' zurückkommt, bedeutet das, dass der Benutzer\n"
-    "       eine neue Anfrage gestellt hat, die NICHT im korrekten Format ist. Du MUSST diese neue Anfrage\n"
-    "       IGNORIEREN und stattdessen die Nachricht aus 'message' verwenden, die bereits die richtige\n"
-    "       Erinnerung enthält. Gib diese Nachricht EXAKT so weiter, ohne Änderungen.\n"
-    "     * Wenn der Benutzer die Identitätsinformationen liefert (z.B. 'Tran, Huy, khanhhuy288@gmail.com'):\n"
-    "       → Rufe 'process_ticket' erneut auf mit:\n"
-    "         - message: Die Identitätsinformationen vom Benutzer (z.B. 'Tran, Huy, khanhhuy288@gmail.com')\n"
-    "         - original_message: Die ursprüngliche Anfrage, die du dir gemerkt hast\n"
-    "     * Dies stellt sicher, dass die ursprüngliche Anfrage zusammen mit den Identitätsinformationen verarbeitet wird\n\n"
-    "   - Wenn 'status' = 'unsupported':\n"
-    "     * Sage höflich: 'Leider kann ich bei dieser Anfrage nicht helfen.'\n\n"
-    "   - Wenn 'status' = 'error':\n"
-    "     * Entschuldige dich: 'Es ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut.'\n\n"
+    "1. **ALLE Benutzernachrichten verarbeiten:**\n"
+    "   - Für JEDE Benutzernachricht rufst du IMMER die Funktion 'process_ticket' auf\n"
+    "   - Übergebe die vollständige Benutzernachricht im 'message' Parameter\n"
+    "   - Die Funktion prüft automatisch alles und gibt dir die richtige Antwort zurück\n"
+    "   - Du musst NICHT entscheiden, ob die Nachricht eine Anfrage ist oder Identitätsinformationen\n"
+    "   - Die Funktion erkennt automatisch das Format und verarbeitet entsprechend\n\n"
+    "2. **Antworten basierend auf Workflow-Ergebnis:**\n"
+    "   Nach jedem 'process_ticket' Aufruf gibst du die Antwort aus 'message' an den Benutzer weiter:\n"
+    "   - Die Funktion gibt dir IMMER die richtige Antwort in 'message' zurück\n"
+    "   - Gib die 'message' EXAKT so weiter, wie sie ist - keine Änderungen, keine Ergänzungen\n"
+    "   - Die Funktion hat bereits alle Logik verarbeitet und die passende Antwort generiert\n"
+    "   - Wenn 'is_historian_answer' = True: Die 'message' ist die komplette Historian-Antwort, gib sie 1:1 weiter\n"
+    "   - Wenn 'status' = 'waiting_for_identity': Die 'message' enthält bereits die Aufforderung, gib sie 1:1 weiter\n"
+    "   - Wenn 'status' = 'completed': Die 'message' enthält die Erfolgsmeldung, gib sie 1:1 weiter\n"
+    "   - Wenn 'status' = 'unsupported' oder 'error': Die 'message' enthält die Fehlermeldung, gib sie 1:1 weiter\n"
+    "   - MERKE: Du musst NICHT entscheiden, was zu tun ist - die Funktion hat das bereits gemacht\n\n"
     "3. **Ton und Stil:**\n"
     "   - Sei immer freundlich und professionell\n"
     "   - Antworte auf Deutsch\n"
-    "   - Verwende eine natürliche, gesprächige Sprache\n"
-    "   - Wenn du nach Informationen fragst, sei spezifisch und verwende die exakten Feldnamen aus metadata\n\n"
-    "4. **Workflow-Integration:**\n"
-    "   - Nutze IMMER die 'process_ticket' Funktion für alle Anfragen\n"
-    "   - Für die ERSTE Anfrage: Übergebe nur 'message' mit der vollständigen Benutzernachricht\n"
-    "   - Wenn 'status' = 'missing_identity' zurückkommt:\n"
-    "     * MERKE DIR die ursprüngliche Nachricht (die du an 'process_ticket' übergeben hast)\n"
-    "     * Frage den Benutzer nach Identitätsinformationen\n"
-    "   - Wenn der Benutzer Identitätsinformationen liefert:\n"
-    "     * Rufe 'process_ticket' auf mit:\n"
-    "       - message: Die Identitätsinformationen (z.B. 'Tran, Huy, khanhhuy288@gmail.com')\n"
-    "       - original_message: Die ursprüngliche Anfrage, die du dir gemerkt hast\n"
-    "   - Das Workflow-System kombiniert automatisch die ursprüngliche Anfrage mit den Identitätsinformationen\n"
-    "   - WICHTIG: Identitätsinformationen MÜSSEN im Format 'Name, Vorname, E-Mail-Adresse' (komma-getrennt) vorliegen\n\n"
-    "5. **ENTSCHEIDUNGSBAUM nach process_ticket Aufruf:**\n"
-    "   Schritt 1: Prüfe 'is_historian_answer' oder 'metadata.category'\n"
-    "   Schritt 2a: Wenn 'is_historian_answer' = True ODER 'metadata.category' = 'Frage zur Historie von AI':\n"
-    "              → Verwende 'message' EXAKT so\n"
-    "              → Keine zusätzlichen Texte, keine Umformulierung\n"
-    "   Schritt 2b: Wenn 'status' = 'completed' UND category != 'Frage zur Historie von AI':\n"
-    "              → Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'\n"
-    "   Schritt 2c: Wenn 'status' = 'missing_identity' ODER 'status' = 'waiting_for_identity':\n"
-    "              → MERKE DIR die ursprüngliche Nachricht (die du an 'process_ticket' übergeben hast)\n"
-    "              → Frage nach ALLEN drei Feldern im Format 'Name, Vorname, E-Mail-Adresse'\n"
-    "              → KRITISCH: Wenn 'status' = 'waiting_for_identity', bedeutet das, dass der Benutzer\n"
-    "                eine neue Anfrage gestellt hat, die NICHT im korrekten Format ist. Du MUSST diese\n"
-    "                neue Anfrage IGNORIEREN und stattdessen die Nachricht aus 'message' verwenden.\n"
-    "                Gib diese Nachricht EXAKT so weiter, ohne Änderungen.\n"
-    "              → KRITISCH: Wenn der Benutzer eine NEUE Anfrage stellt (nicht im Format), rufe 'process_ticket' NICHT auf.\n"
-    "                Erinnere stattdessen den Benutzer daran, zuerst Identitätsinformationen bereitzustellen.\n"
-    "              → Wenn der Benutzer Identitätsinformationen liefert, rufe 'process_ticket' auf mit:\n"
-    "                 message=<Identitätsinformationen>, original_message=<ursprüngliche Nachricht>\n"
-    "   Schritt 2d: Wenn 'status' = 'unsupported':\n"
-    "              → Sage: 'Leider kann ich bei dieser Anfrage nicht helfen.'\n"
-    "   Schritt 2e: Wenn 'status' = 'error':\n"
-    "              → Entschuldige dich und bitte um Wiederholung\n\n"
-    "Beispiel-Ablauf für AI-Historie-Frage:\n"
-    "1. Benutzer: 'Hi, mein Name ist Peter Schneider, meine E-Mail ist peter@example.com. Ich recherchiere die Entwicklung von Chatbots...'\n"
-    "2. Du: Rufe 'process_ticket' auf mit der vollständigen Nachricht\n"
-    "3. Workflow extrahiert automatisch: name='Schneider', vorname='Peter', email='peter@example.com'\n"
-    "4. Workflow klassifiziert als 'Frage zur Historie von AI' und Historian generiert eine Antwort\n"
-    "5. Funktion gibt zurück: status='completed', metadata.category='Frage zur Historie von AI', message='[Historian-Antwort]'\n"
-    "6. Du: Prüfe metadata.category - es ist 'Frage zur Historie von AI'\n"
-    "7. Du: Gib die 'message' EXAKT so weiter: '[Historian-Antwort]' (ohne zusätzliche Texte)\n\n"
-    "Beispiel-Ablauf für andere Kategorien:\n"
-    "1. Benutzer: 'Ich habe ein Problem mit meinem Login'\n"
-    "2. Du: Rufe 'process_ticket' auf\n"
-    "3. Workflow klassifiziert als 'Probleme bei der Anmeldung'\n"
-    "4. Funktion gibt zurück: status='completed', metadata.category='Probleme bei der Anmeldung'\n"
-    "5. Du: Prüfe metadata.category - es ist NICHT 'Frage zur Historie von AI'\n"
-    "6. Du: Antworte: 'Ihr Ticket wurde erfolgreich an das IT-Team übergeben. Sie erhalten eine Rückmeldung per E-Mail.'"
+    "   - Die Antworten kommen bereits von der Funktion, du musst sie nur weitergeben\n\n"
+    "ZUSAMMENFASSUNG - WICHTIG:\n"
+    "- Für JEDE Benutzernachricht: Rufe IMMER 'process_ticket' auf\n"
+    "- Die Funktion prüft automatisch alles (Format, Identität, etc.)\n"
+    "- Gib die 'message' aus dem Ergebnis EXAKT so weiter\n"
+    "- Du musst KEINE Entscheidungen treffen - die Funktion macht alles\n\n"
+    "Beispiel-Ablauf:\n"
+    "1. Benutzer sendet eine Nachricht\n"
+    "2. Du rufst 'process_ticket(message=<Benutzernachricht>)' auf\n"
+    "3. Funktion gibt zurück: {status: '...', message: '...'}\n"
+    "4. Du gibst die 'message' EXAKT so an den Benutzer weiter\n"
+    "5. Fertig - keine weiteren Entscheidungen nötig!"
 )
 
 
-def _get_state_key(thread_id: str | None, message: str | None = None) -> str:
-    """Generate a state key from thread_id or message hash."""
-    if thread_id:
-        return f"thread_{thread_id}"
-    elif message:
-        # Use hash of message as fallback
-        message_hash = hashlib.md5(message.encode()).hexdigest()
-        return f"msg_{message_hash}"
-    else:
-        return "default"
+def _hash_message(message: str) -> str:
+    """Create a simple hash of a message for state tracking."""
+    import hashlib
+    return hashlib.md5(message.encode('utf-8')).hexdigest()[:16]
 
 
-def prepare_ticket_message(
-    message: str,
-    thread_id: str | None = None,
-    name: str | None = None,
-    vorname: str | None = None,
-    email: str | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """Prepare ticket message for workflow processing with state management.
+def get_thread_state(thread_id: str | None, message: str | None = None) -> dict[str, Any]:
+    """Get state for a thread. Returns default state if thread_id is None or not found.
     
-    This function handles follow-up messages when identity information is missing.
-    It uses the same state management logic as the conversational agent.
-    
-    Args:
-        message: The current message from the user
-        thread_id: Optional thread ID for conversation continuity
-        name: Optional name (if provided directly)
-        vorname: Optional vorname (if provided directly)
-        email: Optional email (if provided directly)
-    
-    Returns:
-        Tuple of (prepared_message, metadata) where:
-        - prepared_message: The message to send to the workflow (may be combined with original)
-        - metadata: Additional metadata including thread_id and state information
+    Uses Microsoft Agent Framework's conversation management pattern:
+    - State is tracked per conversation/thread_id (preferred)
+    - Falls back to message-based tracking when thread_id is not available (DevUI)
+    - Returns default (not waiting) state when neither is found
     """
-    from chat_agents_system.utils import get_logger
-    
-    logger = get_logger(__name__)
-    
-    # If identity fields are provided directly, use them and don't check state
-    if name or vorname or email:
-        logger.debug("Identity fields provided directly, skipping state check")
-        return message, {"thread_id": thread_id}
-    
-    # Determine state key
-    state_key = _get_state_key(thread_id, message)
-    
-    # Get current state for this thread/message
     with _state_lock:
-        thread_state = _identity_state.get(state_key, {
+        # First try thread_id-based tracking
+        if thread_id:
+            state = _identity_state.get(thread_id)
+            if state:
+                return state
+        
+        # Fallback: check if any state is waiting (for DevUI when thread_id not available)
+        # This handles the case where DevUI doesn't pass thread_id but we still need to track state
+        if message:
+            message_hash = _hash_message(message)
+            state = _identity_state_by_message.get(message_hash)
+            if state:
+                return state
+            
+            # Check all waiting states - if any are waiting, assume we're in that conversation
+            # For DevUI, there's typically only one active conversation, so this is safe
+            # We prioritize the most recent waiting state (last in dict, but order isn't guaranteed)
+            # The key point: if ANY state is waiting, we should check format before processing
+            for state in _identity_state.values():
+                if state.get("waiting_for_identity"):
+                    return state
+            
+            # Also check message-based states
+            for state in _identity_state_by_message.values():
+                if state.get("waiting_for_identity"):
+                    return state
+        
+        # Default: not waiting
+        return {
             "waiting_for_identity": False,
             "original_message": None,
-        })
-    
-    # If we're waiting for identity, check if the message matches the required format
-    if thread_state["waiting_for_identity"]:
-        message_stripped = message.strip()
-        if _IDENTITY_FORMAT_PATTERN.match(message_stripped):
-            # This is identity information - combine with original message
-            original_message = thread_state["original_message"]
-            if original_message:
-                # Combine: original request + identity information
-                # Format: original message, then a separator, then identity info
-                combined_message = f"{original_message}\n\n---\n{message}"
-                logger.debug(f"Combining original message with identity info: {repr(combined_message[:100])}")
-                return combined_message, {
-                    "thread_id": thread_id,
-                    "is_follow_up": True,
-                    "original_message": original_message,
-                }
-            else:
-                # No original message stored, treat as new request
-                logger.warning("State indicates waiting for identity but no original_message found")
-                return message, {"thread_id": thread_id}
-        else:
-            # Still waiting for identity in correct format
-            logger.debug(f"Still waiting for identity, message doesn't match format: {repr(message)}")
-            return message, {
-                "thread_id": thread_id,
-                "waiting_for_identity": True,
-                "original_message": thread_state["original_message"],
-            }
-    
-    # Normal case: new message
-    return message, {"thread_id": thread_id}
+        }
 
 
-def update_identity_state(
-    status: str,
-    thread_id: str | None = None,
-    original_message: str | None = None,
-    prepared_message: str | None = None,
-) -> None:
-    """Update identity state after workflow execution.
+def set_thread_state(thread_id: str | None, waiting_for_identity: bool, original_message: str | None = None) -> None:
+    """Set state for a thread. Uses thread_id if available, otherwise falls back to message-based tracking.
     
-    This function manages the state tracking for identity requests, similar to
-    how the conversational agent handles it. It should be called after running
-    the workflow to update the state based on the result.
-    
-    Args:
-        status: The status from the workflow result ('missing_identity', 'completed', etc.)
-        thread_id: Optional thread ID for conversation continuity
-        original_message: The original message that was waiting for identity
-        prepared_message: The prepared message that was sent to the workflow
+    Uses Microsoft Agent Framework's conversation management pattern:
+    - State is stored per conversation/thread_id (preferred)
+    - Falls back to message-based tracking when thread_id is not available (DevUI)
     """
-    logger = get_logger(__name__)
-    
-    if not (thread_id or original_message or prepared_message):
-        return  # No state to manage
-    
-    state_key = _get_state_key(thread_id, original_message or prepared_message)
-    
     with _state_lock:
-        if status == "missing_identity":
-            # We're now waiting for identity - store state
-            original_msg = original_message or prepared_message
-            if original_msg:
-                state_key_for_storage = _get_state_key(thread_id, original_msg)
-                _identity_state[state_key_for_storage] = {
-                    "waiting_for_identity": True,
-                    "original_message": original_msg,
-                }
-                logger.debug(f"Set waiting_for_identity=True for state_key {state_key_for_storage}")
-        elif status == "completed":
-            # Identity is complete - clear waiting state
-            keys_to_remove = []
-            for key, state in _identity_state.items():
-                if state.get("original_message") == prepared_message or state.get("original_message") == original_message:
-                    keys_to_remove.append(key)
-            for key in keys_to_remove:
-                del _identity_state[key]
-            if keys_to_remove:
-                logger.debug(f"Cleared waiting_for_identity for {len(keys_to_remove)} state(s)")
+        if waiting_for_identity:
+            state = {
+                "waiting_for_identity": True,
+                "original_message": original_message,
+            }
+            if thread_id:
+                _identity_state[thread_id] = state
+            elif original_message:
+                # Fallback: track by message hash when thread_id not available
+                message_hash = _hash_message(original_message)
+                _identity_state_by_message[message_hash] = state
+        else:
+            # Clear state when identity is complete
+            if thread_id:
+                _identity_state.pop(thread_id, None)
+            elif original_message:
+                # Clear message-based state
+                message_hash = _hash_message(original_message)
+                _identity_state_by_message.pop(message_hash, None)
+
+
 
 
 def create_chat_client() -> AzureOpenAIChatClient:
@@ -308,117 +194,106 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
     ) -> dict[str, Any]:
         """Verarbeitet eine Ticket-Anfrage durch das Workflow-System.
         
-        Das Workflow-System extrahiert automatisch Identitätsinformationen (Name, Vorname, E-Mail)
-        aus der Nachricht. Du musst diese nicht selbst extrahieren.
+        Diese Funktion wird für JEDE Benutzernachricht aufgerufen. Sie prüft automatisch:
+        - Ob Identitätsinformationen im korrekten Format vorliegen
+        - Ob wir auf Identitätsinformationen warten
+        - Ob die Nachricht eine neue Anfrage oder Identitätsinformationen enthält
+        
+        Die Funktion gibt IMMER eine vollständige Antwort in 'message' zurück, die direkt
+        an den Benutzer weitergegeben werden kann.
         
         Args:
-            message: Die aktuelle Benutzeranfrage oder Nachricht.
-                   Wenn 'original_message' angegeben ist, sollte 'message' die Identitätsinformationen enthalten
-                   (z.B. "Tran, Huy, khanhhuy288@gmail.com").
-                   Wenn 'original_message' None ist, sollte 'message' die vollständige Anfrage enthalten.
-            original_message: (Optional) Die ursprüngliche Anfrage, für die Identitätsinformationen fehlten.
-                           Wenn angegeben, wird diese mit 'message' (Identitätsinformationen) kombiniert.
+            message: Die Benutzernachricht (kann eine Anfrage oder Identitätsinformationen sein)
+            original_message: (Optional) Wird automatisch aus dem Thread-State übernommen, falls vorhanden
             thread_id: (Optional) Die Thread-ID für die Konversation. Wird für State-Tracking verwendet.
         
         Returns:
-            Ein Dictionary mit Status, Nachricht und Metadaten der Verarbeitung:
+            Ein Dictionary mit Status und vollständiger Antwortnachricht:
             - status: 'missing_identity', 'unsupported', 'completed', 'waiting_for_identity', oder 'error'
-            - message: Die Antwortnachricht vom Workflow
+            - message: Die vollständige Antwortnachricht, die EXAKT so an den Benutzer weitergegeben werden soll
             - is_historian_answer: (Optional) True wenn die 'message' die direkte Historian-Antwort ist
-            - metadata: Zusätzliche Metadaten mit folgenden Feldern:
-              * category: Die Kategorie der Anfrage ('Frage zur Historie von AI', 'O365 Frage', etc.)
-              * missing_fields: Liste fehlender Felder (wenn status='missing_identity')
-              * missing_labels: Labels für fehlende Felder (wenn status='missing_identity')
-              * original_message: (Optional) Die ursprüngliche Anfrage, wenn identity fehlte
+            - metadata: Zusätzliche Metadaten (category, etc.)
             - payload: Optional versendetes Payload (wenn Ticket erstellt wurde)
-            
-        WICHTIGE REGEL FÜR AI-HISTORIE-FRAGEN:
-        Wenn 'is_historian_answer' = True ODER 'metadata.category' = 'Frage zur Historie von AI':
-        - Die 'message' ist die KOMPLETTE Antwort vom Historian-Executor
-        - Diese Antwort muss EXAKT so an den Benutzer weitergegeben werden, OHNE Änderungen
-        - Füge KEINE zusätzlichen Texte hinzu wie 'Ihr Ticket wurde erfolgreich...'
-        - Die Antwort ist bereits vollständig und beantwortet die Frage des Benutzers
         """
         from chat_agents_system.utils import get_logger
         
         logger = get_logger(__name__)
+        logger.debug(f"process_ticket called with message: {repr(message[:100])}, original_message: {repr(original_message[:100] if original_message else None)}, thread_id: {thread_id}")
         
-        # Determine state key: use thread_id if provided, otherwise use message hash
-        # If original_message is provided, use it to find the state
-        state_key = None
-        if original_message:
-            # When original_message is provided, find the state by the original message hash
-            state_key = _get_state_key(thread_id, original_message)
+        # Check if message matches identity format (STRICT: only "Name, Vorname, E-Mail-Adresse")
+        message_stripped = message.strip()
+        is_identity_format = IDENTITY_FORMAT_PATTERN.match(message_stripped)
+        
+        # Determine original_message: from parameter, from thread state, or from any waiting state (fallback)
+        resolved_original_message: str | None = original_message
+        
+        # CRITICAL: Check if we're waiting for identity (from thread_id OR from any waiting state)
+        # When waiting for identity, ONLY accept the exact format "Name, Vorname, E-Mail-Adresse"
+        # Reject everything else, including natural language identity or new queries
+        waiting_for_identity = False
+        waiting_thread_state = None
+        
+        if thread_id:
+            # We have thread_id - check state for this specific thread
+            thread_state = get_thread_state(thread_id)
+            if thread_state.get("waiting_for_identity"):
+                waiting_for_identity = True
+                waiting_thread_state = thread_state
         else:
-            # For new messages, use thread_id or message hash
-            state_key = _get_state_key(thread_id, message)
+            # No thread_id - check for waiting states (fallback for DevUI)
+            # We check regardless of format because:
+            # - If format matches and we're waiting, we need original_message
+            # - If format doesn't match and we're waiting, we need to reject
+            thread_state = get_thread_state(None, message=message)
+            if thread_state.get("waiting_for_identity"):
+                waiting_for_identity = True
+                waiting_thread_state = thread_state
         
-        # Get current state for this thread/message
-        # Also check all states if we're looking for a waiting state without thread_id
-        with _state_lock:
-            thread_state = _identity_state.get(state_key, {
-                "waiting_for_identity": False,
-                "original_message": None,
-            })
-            
-            # If we didn't find a waiting state with the current key and there's no thread_id,
-            # check all states to see if any are waiting (for cases where message hash changed)
-            if not thread_state["waiting_for_identity"] and not thread_id and not original_message:
-                # Check all states to see if any are waiting for identity
-                for key, state in _identity_state.items():
-                    if state.get("waiting_for_identity", False):
-                        # Found a waiting state - use it
-                        thread_state = state
-                        state_key = key
-                        logger.debug(f"Found waiting state with key {key}, original_message: {repr(state.get('original_message', '')[:50])}")
-                        break
+        if waiting_for_identity:
+            logger.debug(
+                f"Waiting for identity detected. Thread ID: {thread_id}, "
+                f"Original message: {repr(waiting_thread_state.get('original_message', '')[:50]) if waiting_thread_state else 'None'}"
+            )
         
-        # If we're waiting for identity and original_message is not provided,
-        # check if the message matches the required format
-        if thread_state["waiting_for_identity"] and not original_message:
-            # Check if message matches the required format: "Name, Vorname, E-Mail-Adresse"
-            message_stripped = message.strip()
-            if not _IDENTITY_FORMAT_PATTERN.match(message_stripped):
-                # Reject the query - we're still waiting for identity in the correct format
-                # Do NOT process this as a new query - ignore it and remind about identity
-                logger.debug(f"Rejecting query - waiting for identity but message doesn't match format: {repr(message)}")
-                return {
-                    "status": "waiting_for_identity",
-                    "message": (
-                        "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
-                        "Beispiel: Müller, Hans, hans@example.com\n\n"
-                        "Ich kann Ihre Anfrage erst bearbeiten, nachdem Sie Ihre Identitätsinformationen "
-                        "im korrekten Format bereitgestellt haben."
-                    ),
-                    "metadata": {
-                        "waiting_for_identity": True,
-                        "original_message": thread_state["original_message"],
-                    },
-                }
-            else:
-                # Message matches the format - use the original_message from the waiting state
-                original_message = thread_state["original_message"]
-                logger.debug(f"Message matches identity format, using original_message from waiting state: {repr(original_message[:50] if original_message else 'None')}")
+        # If waiting for identity and message doesn't match STRICT format, reject it immediately
+        # This prevents the workflow from running and extracting identity from natural language
+        if waiting_for_identity and not is_identity_format:
+            logger.warning(
+                f"REJECTING: Waiting for identity but message doesn't match strict format. "
+                f"Message: {repr(message[:150])}, "
+                f"Thread ID: {thread_id}, "
+                f"Is format match: {is_identity_format}"
+            )
+            return {
+                "status": "waiting_for_identity",
+                "message": (
+                    "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an. "
+                    "Beispiel: Müller, Hans, hans@example.com\n\n"
+                    "Ich kann Ihre Anfrage erst bearbeiten, nachdem Sie Ihre Identitätsinformationen "
+                    "im korrekten Format bereitgestellt haben."
+                ),
+                "metadata": {
+                    "waiting_for_identity": True,
+                    "original_message": waiting_thread_state["original_message"] if waiting_thread_state else None,
+                },
+            }
         
-        # If original_message is provided (either explicitly or from waiting state), combine it with the current message (identity info)
-        # This handles the case where the user provides identity in a follow-up message
-        if original_message:
-            # Combine: original request + identity information
-            # Format: original message, then a separator, then identity info
-            # This allows IdentityExtractorExecutor to extract from the identity part
-            # while preserving the original request for classification
-            combined_message = f"{original_message}\n\n---\n{message}"
-        else:
-            # Normal case: message contains everything
-            combined_message = message
+        # If identity format detected and we're waiting, get original_message from state
+        if is_identity_format and waiting_for_identity and waiting_thread_state:
+            if not resolved_original_message:
+                resolved_original_message = waiting_thread_state["original_message"]
+                logger.debug(f"Identity format detected, using original_message from state: {repr(resolved_original_message[:50] if resolved_original_message else 'None')}")
         
-        # Pass the combined message - let the workflow's IdentityExtractorExecutor handle extraction
-        ticket_input = TicketInput(message=combined_message)
-        
-        # Debug logging
-        logger.debug(f"process_ticket called with message: {repr(message)}")
-        logger.debug(f"ticket_input.message: {repr(ticket_input.message)}")
-        logger.debug(f"thread_state: {thread_state}")
+        # When we have original_message and current message is identity format:
+        # Pass original_message through TicketInput so identity extractor can use it
+        # This is simpler than combining and splitting with separators
+        ticket_input = TicketInput(
+            message=message,
+            original_message=resolved_original_message if resolved_original_message else None
+        )
+        if resolved_original_message:
+            logger.debug(f"Passing original_message through TicketInput: {repr(resolved_original_message[:50])}")
+        logger.debug(f"ticket_input.message length: {len(ticket_input.message)}")
         
         try:
             # Run the async workflow in a new event loop or use the existing one
@@ -449,36 +324,23 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             category = metadata.get("category", "")
             
             # Store original_message in metadata if it was provided, so the agent can remember it
-            if original_message:
-                metadata["original_message"] = original_message
+            if resolved_original_message:
+                metadata["original_message"] = resolved_original_message
             
-            # Update state based on result
-            with _state_lock:
-                if result.status == "missing_identity":
-                    # We're now waiting for identity - store state
-                    # Use the combined_message (or original if provided) as the key
-                    original_msg = combined_message if not original_message else original_message
-                    state_key_for_storage = _get_state_key(thread_id, original_msg)
-                    _identity_state[state_key_for_storage] = {
-                        "waiting_for_identity": True,
-                        "original_message": original_msg,
-                    }
-                    logger.debug(f"Set waiting_for_identity=True for state_key {state_key_for_storage}")
-                elif result.status == "completed":
-                    # Identity is complete - clear waiting state for this key and related keys
-                    # Clear all states that might be related (by checking if original_message matches)
-                    keys_to_remove = []
-                    # Also clear the state_key we found earlier if it's different
-                    if state_key and state_key not in keys_to_remove:
-                        keys_to_remove.append(state_key)
-                    for key, state in _identity_state.items():
-                        if state.get("original_message") == combined_message or state.get("original_message") == original_message:
-                            if key not in keys_to_remove:
-                                keys_to_remove.append(key)
-                    for key in keys_to_remove:
-                        if key in _identity_state:
-                            del _identity_state[key]
-                    logger.debug(f"Cleared waiting_for_identity for {len(keys_to_remove)} state(s)")
+            # Update state based on result (works with or without thread_id)
+            if result.status == "missing_identity":
+                # We're now waiting for identity - store the original message
+                original_msg = resolved_original_message if resolved_original_message else message
+                set_thread_state(thread_id, waiting_for_identity=True, original_message=original_msg)
+                logger.debug(
+                    f"Set waiting_for_identity=True. Thread ID: {thread_id}, "
+                    f"Original message length: {len(original_msg) if original_msg else 0}"
+                )
+            elif result.status == "completed":
+                # Identity is complete - clear waiting state
+                original_msg = resolved_original_message if resolved_original_message else message
+                set_thread_state(thread_id, waiting_for_identity=False, original_message=original_msg)
+                logger.debug(f"Cleared waiting_for_identity. Thread ID: {thread_id}")
             
             # For AI history questions, the message IS the answer from HistorianExecutor
             # Make this explicit in the response
@@ -512,7 +374,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
 def create_ticket_workflow(*, simulate_dispatch: bool = True) -> Workflow:
     chat_client = create_chat_client()
 
-    intake = IntakeExecutor()
+    # IdentityExtractorExecutor now handles intake functionality (normalizing input and creating TicketContext)
     identity = IdentityExtractorExecutor(chat_client)
     validation = ValidationExecutor()
     classification = ClassificationExecutor(chat_client)
@@ -542,8 +404,7 @@ def create_ticket_workflow(*, simulate_dispatch: bool = True) -> Workflow:
             name="Ticket Workflow",
             description="Branching workflow with category-based routing after classification.",
         )
-        .set_start_executor(intake)
-        .add_edge(intake, identity)
+        .set_start_executor(identity)
         .add_edge(identity, validation)
         .add_edge(validation, classification)
         # Branch after classification based on category

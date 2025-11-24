@@ -21,6 +21,7 @@ class TicketInput:
     name: Optional[str] = None
     vorname: Optional[str] = None
     email: Optional[str] = None
+    original_message: Optional[str] = None  # For follow-up identity messages
 
 
 @dataclass(slots=True)
