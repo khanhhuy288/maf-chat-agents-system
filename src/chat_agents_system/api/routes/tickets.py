@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from chat_agents_system.schemas import TicketInput, TicketResponse
@@ -53,19 +53,18 @@ class TicketRequest(BaseModel):
     thread_id: str | None = Field(
         None,
         description=(
-            "Thread ID for conversation continuity (optional). "
-            "Use the same thread_id across multiple requests to maintain conversation state. "
-            "Required for follow-up identity messages. "
-            "Example: 'thread-123' or any unique identifier."
+            "Thread ID for conversation continuity. "
+            "Two-step identity capture REQUIRES supplying the same thread_id returned in the "
+            "initial missing_identity response. Without a thread_id, all identity fields must be "
+            "included up front. Example: 'thread-abc123'."
         ),
         example="thread-abc123"
     )
     simulate_dispatch: bool = Field(
         True,
         description=(
-            "Whether to simulate dispatch to Logic App (default: True). "
-            "Set to False to actually send HTTP requests to the configured Logic App endpoint. "
-            "Use True for testing to avoid external API calls."
+            "Dispatcher simulation toggle. Forced to True for the current demo build so that "
+            "no requests are sent to the Logic App endpoint, even if False is provided."
         ),
         example=True
     )
@@ -119,7 +118,8 @@ class TicketResponseModel(BaseModel):
     Process a ticket through the multi-agent workflow system. The endpoint mirrors the DevUI
     behavior: identity must be captured first, and `thread_id` enables the server-side
     identity loop so the workflow can resume once the user submits the strict format
-    `Name, Vorname, E-Mail-Adresse`.
+    `Name, Vorname, E-Mail-Adresse`. Dispatcher calls always run in **simulation mode** in
+    this demo build, so the Logic App is never invoked.
     
     ## Workflow Steps
     1. **Identity Extraction** – Normalizes input, preserves the original message and pulls `name`, `vorname`, `email`.
@@ -149,8 +149,8 @@ class TicketResponseModel(BaseModel):
     ```
     → The API automatically reuses the stored original request and continues the workflow.
     
-    Without a `thread_id`, the API is stateless: include identity fields up front or set
-    `original_message` manually when sending follow-up identity information.
+    Ohne `thread_id` ist kein zweistufiger Ablauf möglich – liefern Sie dann alle Identitätsfelder
+    direkt mit der ersten Anfrage.
     
     ## Response Statuses
     
@@ -159,6 +159,7 @@ class TicketResponseModel(BaseModel):
     - `waiting_for_identity` – A strict identity string was expected but not provided.
     - `unsupported` – Category `Sonstiges` (no dispatch).
     - `error` – Processing failure (the request returns HTTP 200 with `status="error"` unless an exception occurs, which surfaces as HTTP 500).
+    - HTTP 400 – Raised when a client sends an identity-only follow-up without the `thread_id` returned in the prior `missing_identity` response.
     
     ## AI History Questions
     
@@ -188,7 +189,7 @@ class TicketResponseModel(BaseModel):
     }
     ```
     
-    Step 2 – Strict identity reply:
+    Step 2 – Strict identity reply (must include identical `thread_id`):
     ```json
     {
       "message": "Müller, Hans, hans@example.com",
@@ -210,6 +211,19 @@ class TicketResponseModel(BaseModel):
                 }
             }
         },
+        400: {
+            "description": "Client error (e.g., missing thread_id for identity follow-up)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": (
+                            "Identity follow-ups require the same thread_id provided in the previous "
+                            "missing_identity response. Resend the identity string with that thread_id."
+                        )
+                    }
+                }
+            },
+        },
         500: {
             "description": "Processing error",
             "content": {
@@ -224,6 +238,18 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
     """Process a ticket through the workflow system."""
     try:
         logger.info(f"Processing ticket request: message={request.message[:100]}...")
+        message_stripped = request.message.strip()
+
+        # Identity-only follow-ups must supply the thread_id that was returned with the
+        # missing_identity response so we can recover the stored original message.
+        if not request.thread_id and IDENTITY_FORMAT_PATTERN.match(message_stripped):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Identity follow-ups require the same thread_id provided in the previous "
+                    "missing_identity response. Resend the identity string with that thread_id."
+                ),
+            )
         
         # Determine whether this thread is waiting for strict identity info
         original_message: str | None = None
@@ -254,7 +280,12 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
                         },
                     )
         
-        workflow = create_ticket_workflow(simulate_dispatch=request.simulate_dispatch)
+        if not request.simulate_dispatch:
+            logger.info(
+                "simulate_dispatch=False was requested but is ignored; dispatcher runs in "
+                "simulation mode for the current demo build."
+            )
+        workflow = create_ticket_workflow(simulate_dispatch=True)
         
         ticket_input = TicketInput(
             message=request.message,
@@ -279,15 +310,25 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         
         # Update state based on result (simplified thread-based approach)
         if request.thread_id:
+            original_msg = original_message if original_message else request.message
             if result.status == "missing_identity":
-                # Store original message for this thread
-                original_msg = original_message if original_message else request.message
-                set_thread_state(request.thread_id, waiting_for_identity=True, original_message=original_msg)
+                set_thread_state(
+                    request.thread_id,
+                    waiting_for_identity=True,
+                    original_message=original_msg,
+                )
                 logger.debug(f"Set waiting_for_identity=True for thread_id {request.thread_id}")
-            elif result.status == "completed":
-                # Clear waiting state for this thread
-                set_thread_state(request.thread_id, waiting_for_identity=False)
-                logger.debug(f"Cleared waiting_for_identity for thread_id {request.thread_id}")
+            else:
+                set_thread_state(
+                    request.thread_id,
+                    waiting_for_identity=False,
+                    original_message=original_msg,
+                )
+                logger.debug(
+                    "Cleared waiting_for_identity for thread_id %s after status %s",
+                    request.thread_id,
+                    result.status,
+                )
         
         logger.info(f"Ticket processed successfully: status={result.status}")
         

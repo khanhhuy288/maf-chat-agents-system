@@ -33,12 +33,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=f"Port to listen on. Defaults to {DEFAULT_PORT}.",
     )
     parser.add_argument(
-        "--workers",
-        type=int,
-        default=1,
-        help="Number of worker processes. Defaults to 1. Use 4+ for production.",
-    )
-    parser.add_argument(
         "--reload",
         action="store_true",
         help="Enable auto-reload for development (not recommended for production).",
@@ -121,7 +115,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         
         sys.exit(1)
     
-    logger.info(f"Starting Chat Agents System API on {args.host}:{args.port}")
+    logger.info(f"Starting Chat Agents System API on {args.host}:{args.port} (single worker enforced)")
     
     # For reload mode, uvicorn requires an import string, not an app object
     # This allows uvicorn to reload the module and recreate the app on file changes
@@ -142,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             app,
             host=args.host,
             port=args.port,
-            workers=args.workers,
+            workers=1,
             log_level=args.log_level.lower(),
         )
 
