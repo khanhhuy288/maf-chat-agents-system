@@ -116,90 +116,71 @@ class TicketResponseModel(BaseModel):
     response_model=TicketResponseModel,
     summary="Process a ticket through the workflow system",
     description="""
-    Process a ticket through the multi-agent workflow system.
+    Process a ticket through the multi-agent workflow system. The endpoint mirrors the DevUI
+    behavior: identity must be captured first, and `thread_id` enables the server-side
+    identity loop so the workflow can resume once the user submits the strict format
+    `Name, Vorname, E-Mail-Adresse`.
     
     ## Workflow Steps
-    1. **Identity Extraction**: Extracts name, vorname, email from message or request fields
-    2. **Validation**: Ensures all required identity fields are present
-    3. **Classification**: Categorizes the request (AI history, O365, hardware, login, other)
-    4. **Category Handling**: Routes to appropriate handler (Historian, Dispatcher, etc.)
-    5. **Response**: Returns formatted response with status and message
+    1. **Identity Extraction** – Normalizes input, preserves the original message and pulls `name`, `vorname`, `email`.
+    2. **Validation** – Returns `status="missing_identity"` whenever a field is absent.
+    3. **Classification** – Categorizes into AI history, O365, hardware, login, or other and produces a short summary.
+    4. **Category Handling** – Historian answers AI history questions, Dispatcher posts dispatchable tickets, OTHER exits early.
+    5. **Response Formatting** – Produces the final `TicketResponse` (`completed`, `unsupported`, etc.).
     
     ## Two-Step Flow (Missing Identity)
     
-    When identity information is missing, the endpoint supports a two-step conversation flow:
-    
-    **Step 1: Initial Request**
+    **Step 1: Initial Request (no identity yet)**
     ```json
     {
       "message": "Ich habe ein Problem mit meinem Login",
-      "thread_id": "my-thread-123"
+      "thread_id": "thread-123"
     }
     ```
+    → Response: `status = "missing_identity"`, metadata includes `thread_id`, `missing_fields`,
+    `waiting_for_identity = true`.
     
-    **Response:**
-    ```json
-    {
-      "status": "missing_identity",
-      "message": "Bitte geben Sie Ihre Angaben im Format Name, Vorname, E-Mail-Adresse an...",
-      "metadata": {
-        "thread_id": "my-thread-123",
-        "missing_fields": ["name", "vorname", "email"],
-        "missing_labels": ["Name", "Vorname", "E-Mail-Adresse"]
-      }
-    }
-    ```
-    
-    **Step 2: Follow-up with Identity**
+    **Step 2: Follow-up with strict identity format**
     ```json
     {
       "message": "Müller, Hans, hans@example.com",
-      "thread_id": "my-thread-123"
+      "thread_id": "thread-123"
     }
     ```
+    → The API automatically reuses the stored original request and continues the workflow.
     
-    The system automatically combines the original request with the identity information.
-    
-    ## Single Request (With Identity)
-    
-    You can also provide identity directly:
-    ```json
-    {
-      "message": "Ich habe ein Problem mit meinem Login",
-      "name": "Müller",
-      "vorname": "Hans",
-      "email": "hans@example.com"
-    }
-    ```
+    Without a `thread_id`, the API is stateless: include identity fields up front or set
+    `original_message` manually when sending follow-up identity information.
     
     ## Response Statuses
     
-    - **completed**: Ticket processed successfully
-    - **missing_identity**: Identity required (send follow-up with same thread_id)
-    - **waiting_for_identity**: Still waiting for identity in correct format
-    - **unsupported**: Request category not supported
-    - **error**: Processing error occurred
+    - `completed` – Ticket processed successfully (includes dispatcher payload + metadata).
+    - `missing_identity` – Identity required; client should resend only the strict identity string with the same `thread_id`.
+    - `waiting_for_identity` – A strict identity string was expected but not provided.
+    - `unsupported` – Category `Sonstiges` (no dispatch).
+    - `error` – Processing failure (the request returns HTTP 200 with `status="error"` unless an exception occurs, which surfaces as HTTP 500).
     
     ## AI History Questions
     
-    For questions about AI history (category: "Frage zur Historie von AI"), the `message` field
-    contains the complete answer from the Historian agent. No additional processing is needed.
+    When the classifier labels the ticket as `"Frage zur Historie von AI"`, the Historian agent
+    generates the full German answer; the response `message` already contains the final text.
     
     ## Request Examples
     
-    **Single Request with Identity:**
+    **Single Request with Identity**
     ```json
     {
       "message": "Ich habe ein Problem mit meinem Login",
       "name": "Müller",
       "vorname": "Hans",
       "email": "hans@example.com",
-      "thread_id": "thread-123",
       "simulate_dispatch": true
     }
     ```
     
-    **Initial Request (Missing Identity):**
+    **Two-Step Flow**
+    
+    Step 1 – Missing identity:
     ```json
     {
       "message": "Ich habe ein Problem mit meinem Login",
@@ -207,7 +188,7 @@ class TicketResponseModel(BaseModel):
     }
     ```
     
-    **Follow-up with Identity:**
+    Step 2 – Strict identity reply:
     ```json
     {
       "message": "Müller, Hans, hans@example.com",
@@ -244,28 +225,20 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
     try:
         logger.info(f"Processing ticket request: message={request.message[:100]}...")
         
-        # Simplified state management: use thread_id for conversation continuity
+        # Determine whether this thread is waiting for strict identity info
         original_message: str | None = None
-        prepared_message = request.message
-        
-        # If identity fields are provided directly, use them and skip state check
-        if not (request.name or request.vorname or request.email) and request.thread_id:
-            # Check if we're waiting for identity in this thread
+        if request.thread_id:
             thread_state = get_thread_state(request.thread_id)
-            
             if thread_state["waiting_for_identity"]:
-                # Check if message matches identity format
                 message_stripped = request.message.strip()
                 if IDENTITY_FORMAT_PATTERN.match(message_stripped):
-                    # This is identity information - combine with original message
                     original_message = thread_state["original_message"]
-                    if original_message:
-                        prepared_message = f"{original_message}\n\n---\n{request.message}"
-                        logger.debug(f"Combining original message with identity info")
-                    else:
-                        logger.warning("State indicates waiting for identity but no original_message found")
+                    if not original_message:
+                        logger.warning(
+                            "Thread %s expects identity but original_message is missing",
+                            request.thread_id,
+                        )
                 else:
-                    # Still waiting for identity - return waiting status
                     return TicketResponseModel(
                         status="waiting_for_identity",
                         message=(
@@ -281,15 +254,14 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
                         },
                     )
         
-        # Create workflow instance
         workflow = create_ticket_workflow(simulate_dispatch=request.simulate_dispatch)
         
-        # Create ticket input with prepared message
         ticket_input = TicketInput(
-            message=prepared_message,
+            message=request.message,
             name=request.name,
             vorname=request.vorname,
             email=request.email,
+            original_message=original_message,
         )
         
         # Run workflow
@@ -309,7 +281,7 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         if request.thread_id:
             if result.status == "missing_identity":
                 # Store original message for this thread
-                original_msg = original_message if original_message else prepared_message
+                original_msg = original_message if original_message else request.message
                 set_thread_state(request.thread_id, waiting_for_identity=True, original_message=original_msg)
                 logger.debug(f"Set waiting_for_identity=True for thread_id {request.thread_id}")
             elif result.status == "completed":
@@ -323,9 +295,6 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         response_metadata = result.metadata or {}
         if request.thread_id:
             response_metadata["thread_id"] = request.thread_id
-        if result.status == "missing_identity" and original_message:
-            response_metadata["original_message"] = original_message
-            response_metadata["waiting_for_identity"] = True
         
         # Convert to response model
         return TicketResponseModel(
