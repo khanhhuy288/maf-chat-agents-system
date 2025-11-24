@@ -68,6 +68,10 @@ _CONVERSATIONAL_AGENT_INSTRUCTIONS = (
     "     * KRITISCH: Wenn der Benutzer eine NEUE Anfrage stellt (nicht im Format 'Name, Vorname, E-Mail-Adresse'),\n"
     "       dann rufe 'process_ticket' NICHT auf. Stattdessen erinnere den Benutzer daran, dass er zuerst\n"
     "       seine Identitätsinformationen im korrekten Format bereitstellen muss.\n"
+    "     * KRITISCH: Wenn 'status' = 'waiting_for_identity' zurückkommt, bedeutet das, dass der Benutzer\n"
+    "       eine neue Anfrage gestellt hat, die NICHT im korrekten Format ist. Du MUSST diese neue Anfrage\n"
+    "       IGNORIEREN und stattdessen die Nachricht aus 'message' verwenden, die bereits die richtige\n"
+    "       Erinnerung enthält. Gib diese Nachricht EXAKT so weiter, ohne Änderungen.\n"
     "     * Wenn der Benutzer die Identitätsinformationen liefert (z.B. 'Tran, Huy, khanhhuy288@gmail.com'):\n"
     "       → Rufe 'process_ticket' erneut auf mit:\n"
     "         - message: Die Identitätsinformationen vom Benutzer (z.B. 'Tran, Huy, khanhhuy288@gmail.com')\n"
@@ -104,6 +108,10 @@ _CONVERSATIONAL_AGENT_INSTRUCTIONS = (
     "   Schritt 2c: Wenn 'status' = 'missing_identity' ODER 'status' = 'waiting_for_identity':\n"
     "              → MERKE DIR die ursprüngliche Nachricht (die du an 'process_ticket' übergeben hast)\n"
     "              → Frage nach ALLEN drei Feldern im Format 'Name, Vorname, E-Mail-Adresse'\n"
+    "              → KRITISCH: Wenn 'status' = 'waiting_for_identity', bedeutet das, dass der Benutzer\n"
+    "                eine neue Anfrage gestellt hat, die NICHT im korrekten Format ist. Du MUSST diese\n"
+    "                neue Anfrage IGNORIEREN und stattdessen die Nachricht aus 'message' verwenden.\n"
+    "                Gib diese Nachricht EXAKT so weiter, ohne Änderungen.\n"
     "              → KRITISCH: Wenn der Benutzer eine NEUE Anfrage stellt (nicht im Format), rufe 'process_ticket' NICHT auf.\n"
     "                Erinnere stattdessen den Benutzer daran, zuerst Identitätsinformationen bereitzustellen.\n"
     "              → Wenn der Benutzer Identitätsinformationen liefert, rufe 'process_ticket' auf mit:\n"
@@ -346,11 +354,24 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             state_key = _get_state_key(thread_id, message)
         
         # Get current state for this thread/message
+        # Also check all states if we're looking for a waiting state without thread_id
         with _state_lock:
             thread_state = _identity_state.get(state_key, {
                 "waiting_for_identity": False,
                 "original_message": None,
             })
+            
+            # If we didn't find a waiting state with the current key and there's no thread_id,
+            # check all states to see if any are waiting (for cases where message hash changed)
+            if not thread_state["waiting_for_identity"] and not thread_id and not original_message:
+                # Check all states to see if any are waiting for identity
+                for key, state in _identity_state.items():
+                    if state.get("waiting_for_identity", False):
+                        # Found a waiting state - use it
+                        thread_state = state
+                        state_key = key
+                        logger.debug(f"Found waiting state with key {key}, original_message: {repr(state.get('original_message', '')[:50])}")
+                        break
         
         # If we're waiting for identity and original_message is not provided,
         # check if the message matches the required format
@@ -359,6 +380,7 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
             message_stripped = message.strip()
             if not _IDENTITY_FORMAT_PATTERN.match(message_stripped):
                 # Reject the query - we're still waiting for identity in the correct format
+                # Do NOT process this as a new query - ignore it and remind about identity
                 logger.debug(f"Rejecting query - waiting for identity but message doesn't match format: {repr(message)}")
                 return {
                     "status": "waiting_for_identity",
@@ -373,8 +395,12 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
                         "original_message": thread_state["original_message"],
                     },
                 }
+            else:
+                # Message matches the format - use the original_message from the waiting state
+                original_message = thread_state["original_message"]
+                logger.debug(f"Message matches identity format, using original_message from waiting state: {repr(original_message[:50] if original_message else 'None')}")
         
-        # If original_message is provided, combine it with the current message (identity info)
+        # If original_message is provided (either explicitly or from waiting state), combine it with the current message (identity info)
         # This handles the case where the user provides identity in a follow-up message
         if original_message:
             # Combine: original request + identity information
@@ -442,11 +468,16 @@ def create_conversational_agent(*, simulate_dispatch: bool = True) -> ChatAgent:
                     # Identity is complete - clear waiting state for this key and related keys
                     # Clear all states that might be related (by checking if original_message matches)
                     keys_to_remove = []
+                    # Also clear the state_key we found earlier if it's different
+                    if state_key and state_key not in keys_to_remove:
+                        keys_to_remove.append(state_key)
                     for key, state in _identity_state.items():
                         if state.get("original_message") == combined_message or state.get("original_message") == original_message:
-                            keys_to_remove.append(key)
+                            if key not in keys_to_remove:
+                                keys_to_remove.append(key)
                     for key in keys_to_remove:
-                        del _identity_state[key]
+                        if key in _identity_state:
+                            del _identity_state[key]
                     logger.debug(f"Cleared waiting_for_identity for {len(keys_to_remove)} state(s)")
             
             # For AI history questions, the message IS the answer from HistorianExecutor

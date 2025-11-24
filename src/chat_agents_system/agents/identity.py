@@ -166,6 +166,17 @@ class IdentityExtractorExecutor(Executor):
                 setattr(context, field, None)
 
         logger.debug(f"IdentityExtractorExecutor - final context: name={context.name}, vorname={context.vorname}, email={context.email}")
+        
+        # If we extracted from a message with separator, clean up original_message to remove identity part
+        # This ensures classification uses only the original request, not the combined message
+        separator = "\n\n---\n"
+        if separator in context.original_message:
+            parts = context.original_message.split(separator, 1)
+            if len(parts) == 2:
+                # Keep only the part before the separator for classification
+                context.original_message = parts[0].strip()
+                logger.debug(f"IdentityExtractorExecutor - cleaned original_message to remove identity part: {repr(context.original_message[:50])}")
+        
         await ctx.send_message(context)
 
 
