@@ -32,3 +32,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chat_agents_system"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+]

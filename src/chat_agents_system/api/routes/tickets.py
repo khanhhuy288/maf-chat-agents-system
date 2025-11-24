@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -10,12 +9,7 @@ from pydantic import BaseModel, Field
 
 from chat_agents_system.schemas import TicketInput, TicketResponse
 from chat_agents_system.utils import get_logger
-from chat_agents_system.workflow import (
-    IDENTITY_FORMAT_PATTERN,
-    create_ticket_workflow,
-    get_thread_state,
-    set_thread_state,
-)
+from chat_agents_system import workflow as workflow_module
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -32,23 +26,35 @@ class TicketRequest(BaseModel):
 
     message: str = Field(
         ...,
-        description="The user's ticket message. For follow-up identity requests, use format: 'Name, Vorname, Email' (e.g., 'Müller, Hans, hans@example.com')",
-        example="Ich habe ein Problem mit meinem Login"
+        description=(
+            "The user's ticket message. For follow-up identity requests, use format: "
+            "'Name, Vorname, Email' (e.g., 'Müller, Hans, hans@example.com')"
+        ),
+        json_schema_extra={"example": "Ich habe ein Problem mit meinem Login"},
     )
     name: str | None = Field(
         None,
-        description="User's last name (optional). If omitted, system will attempt extraction from message or request follow-up.",
-        example="Müller"
+        description=(
+            "User's last name (optional). If omitted, system will attempt extraction "
+            "from message or request follow-up."
+        ),
+        json_schema_extra={"example": "Müller"},
     )
     vorname: str | None = Field(
         None,
-        description="User's first name (optional). If omitted, system will attempt extraction from message or request follow-up.",
-        example="Hans"
+        description=(
+            "User's first name (optional). If omitted, system will attempt extraction "
+            "from message or request follow-up."
+        ),
+        json_schema_extra={"example": "Hans"},
     )
     email: str | None = Field(
         None,
-        description="User's email address (optional). If omitted, system will attempt extraction from message or request follow-up.",
-        example="hans.mueller@example.com"
+        description=(
+            "User's email address (optional). If omitted, system will attempt "
+            "extraction from message or request follow-up."
+        ),
+        json_schema_extra={"example": "hans.mueller@example.com"},
     )
     thread_id: str | None = Field(
         None,
@@ -58,7 +64,7 @@ class TicketRequest(BaseModel):
             "initial missing_identity response. Without a thread_id, all identity fields must be "
             "included up front. Example: 'thread-abc123'."
         ),
-        example="thread-abc123"
+        json_schema_extra={"example": "thread-abc123"},
     )
     simulate_dispatch: bool = Field(
         True,
@@ -66,7 +72,7 @@ class TicketRequest(BaseModel):
             "Dispatcher simulation toggle. Forced to True for the current demo build so that "
             "no requests are sent to the Logic App endpoint, even if False is provided."
         ),
-        example=True
+        json_schema_extra={"example": True},
     )
 
 
@@ -83,8 +89,11 @@ class TicketResponseModel(BaseModel):
 
     status: str = Field(
         ...,
-        description="Processing status: 'completed', 'missing_identity', 'waiting_for_identity', 'unsupported', or 'error'",
-        example="completed"
+        description=(
+            "Processing status: 'completed', 'missing_identity', 'waiting_for_identity', "
+            "'unsupported', or 'error'"
+        ),
+        json_schema_extra={"example": "completed"},
     )
     message: str = Field(
         ...,
@@ -92,21 +101,29 @@ class TicketResponseModel(BaseModel):
             "Response message. For AI history questions, this contains the full answer. "
             "For missing_identity status, this contains instructions for providing identity."
         ),
-        example="Ihr Ticket wurde erfolgreich an das IT-Team übergeben."
+        json_schema_extra={"example": "Ihr Ticket wurde erfolgreich an das IT-Team übergeben."},
     )
     payload: dict[str, Any] | None = Field(
         None,
         description="Dispatch payload sent to Logic App (if applicable and not simulated)",
-        example={"name": "Müller", "vorname": "Hans", "email": "hans@example.com", "kategorie": "Login"}
+        json_schema_extra={
+            "example": {
+                "name": "Müller",
+                "vorname": "Hans",
+                "email": "hans@example.com",
+                "kategorie": "Login",
+            }
+        },
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Additional metadata. May include: "
-            "thread_id (if provided), category, missing_fields, missing_labels, "
-            "original_message (for follow-up requests), etc."
+            "Additional metadata. May include thread_id, category, missing_fields, "
+            "missing_labels, original_message, etc."
         ),
-        example={"category": "Probleme bei der Anmeldung", "thread_id": "thread-123"}
+        json_schema_extra={
+            "example": {"category": "Probleme bei der Anmeldung", "thread_id": "thread-123"}
+        },
     )
 
 
@@ -242,7 +259,10 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
 
         # Identity-only follow-ups must supply the thread_id that was returned with the
         # missing_identity response so we can recover the stored original message.
-        if not request.thread_id and IDENTITY_FORMAT_PATTERN.match(message_stripped):
+        if (
+            not request.thread_id
+            and workflow_module.IDENTITY_FORMAT_PATTERN.match(message_stripped)
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -254,10 +274,10 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         # Determine whether this thread is waiting for strict identity info
         original_message: str | None = None
         if request.thread_id:
-            thread_state = get_thread_state(request.thread_id)
+            thread_state = workflow_module.get_thread_state(request.thread_id)
             if thread_state["waiting_for_identity"]:
                 message_stripped = request.message.strip()
-                if IDENTITY_FORMAT_PATTERN.match(message_stripped):
+                if workflow_module.IDENTITY_FORMAT_PATTERN.match(message_stripped):
                     original_message = thread_state["original_message"]
                     if not original_message:
                         logger.warning(
@@ -285,7 +305,7 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
                 "simulate_dispatch=False was requested but is ignored; dispatcher runs in "
                 "simulation mode for the current demo build."
             )
-        workflow = create_ticket_workflow(simulate_dispatch=True)
+        workflow = workflow_module.create_ticket_workflow(simulate_dispatch=True)
         
         ticket_input = TicketInput(
             message=request.message,
@@ -312,14 +332,14 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
         if request.thread_id:
             original_msg = original_message if original_message else request.message
             if result.status == "missing_identity":
-                set_thread_state(
+                workflow_module.set_thread_state(
                     request.thread_id,
                     waiting_for_identity=True,
                     original_message=original_msg,
                 )
                 logger.debug(f"Set waiting_for_identity=True for thread_id {request.thread_id}")
             else:
-                set_thread_state(
+                workflow_module.set_thread_state(
                     request.thread_id,
                     waiting_for_identity=False,
                     original_message=original_msg,
@@ -345,6 +365,8 @@ async def process_ticket(request: TicketRequest) -> TicketResponseModel:
             metadata=response_metadata,
         )
         
+    except HTTPException as exc:
+        raise exc
     except Exception as e:
         logger.exception(f"Error processing ticket: {e}")
         raise HTTPException(
