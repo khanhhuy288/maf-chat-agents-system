@@ -25,6 +25,7 @@ from chat_agents_system.schemas import (
     TicketInput,
     TicketResponse,
 )
+from chat_agents_system.utils import get_logger
 
 # Thread-safe state tracking for identity requests
 # Maps state_key (hash of original message or thread_id) -> {"waiting_for_identity": bool, "original_message": str | None}
@@ -139,6 +140,130 @@ def _get_state_key(thread_id: str | None, message: str | None = None) -> str:
         return f"msg_{message_hash}"
     else:
         return "default"
+
+
+def prepare_ticket_message(
+    message: str,
+    thread_id: str | None = None,
+    name: str | None = None,
+    vorname: str | None = None,
+    email: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Prepare ticket message for workflow processing with state management.
+    
+    This function handles follow-up messages when identity information is missing.
+    It uses the same state management logic as the conversational agent.
+    
+    Args:
+        message: The current message from the user
+        thread_id: Optional thread ID for conversation continuity
+        name: Optional name (if provided directly)
+        vorname: Optional vorname (if provided directly)
+        email: Optional email (if provided directly)
+    
+    Returns:
+        Tuple of (prepared_message, metadata) where:
+        - prepared_message: The message to send to the workflow (may be combined with original)
+        - metadata: Additional metadata including thread_id and state information
+    """
+    from chat_agents_system.utils import get_logger
+    
+    logger = get_logger(__name__)
+    
+    # If identity fields are provided directly, use them and don't check state
+    if name or vorname or email:
+        logger.debug("Identity fields provided directly, skipping state check")
+        return message, {"thread_id": thread_id}
+    
+    # Determine state key
+    state_key = _get_state_key(thread_id, message)
+    
+    # Get current state for this thread/message
+    with _state_lock:
+        thread_state = _identity_state.get(state_key, {
+            "waiting_for_identity": False,
+            "original_message": None,
+        })
+    
+    # If we're waiting for identity, check if the message matches the required format
+    if thread_state["waiting_for_identity"]:
+        message_stripped = message.strip()
+        if _IDENTITY_FORMAT_PATTERN.match(message_stripped):
+            # This is identity information - combine with original message
+            original_message = thread_state["original_message"]
+            if original_message:
+                # Combine: original request + identity information
+                # Format: original message, then a separator, then identity info
+                combined_message = f"{original_message}\n\n---\n{message}"
+                logger.debug(f"Combining original message with identity info: {repr(combined_message[:100])}")
+                return combined_message, {
+                    "thread_id": thread_id,
+                    "is_follow_up": True,
+                    "original_message": original_message,
+                }
+            else:
+                # No original message stored, treat as new request
+                logger.warning("State indicates waiting for identity but no original_message found")
+                return message, {"thread_id": thread_id}
+        else:
+            # Still waiting for identity in correct format
+            logger.debug(f"Still waiting for identity, message doesn't match format: {repr(message)}")
+            return message, {
+                "thread_id": thread_id,
+                "waiting_for_identity": True,
+                "original_message": thread_state["original_message"],
+            }
+    
+    # Normal case: new message
+    return message, {"thread_id": thread_id}
+
+
+def update_identity_state(
+    status: str,
+    thread_id: str | None = None,
+    original_message: str | None = None,
+    prepared_message: str | None = None,
+) -> None:
+    """Update identity state after workflow execution.
+    
+    This function manages the state tracking for identity requests, similar to
+    how the conversational agent handles it. It should be called after running
+    the workflow to update the state based on the result.
+    
+    Args:
+        status: The status from the workflow result ('missing_identity', 'completed', etc.)
+        thread_id: Optional thread ID for conversation continuity
+        original_message: The original message that was waiting for identity
+        prepared_message: The prepared message that was sent to the workflow
+    """
+    logger = get_logger(__name__)
+    
+    if not (thread_id or original_message or prepared_message):
+        return  # No state to manage
+    
+    state_key = _get_state_key(thread_id, original_message or prepared_message)
+    
+    with _state_lock:
+        if status == "missing_identity":
+            # We're now waiting for identity - store state
+            original_msg = original_message or prepared_message
+            if original_msg:
+                state_key_for_storage = _get_state_key(thread_id, original_msg)
+                _identity_state[state_key_for_storage] = {
+                    "waiting_for_identity": True,
+                    "original_message": original_msg,
+                }
+                logger.debug(f"Set waiting_for_identity=True for state_key {state_key_for_storage}")
+        elif status == "completed":
+            # Identity is complete - clear waiting state
+            keys_to_remove = []
+            for key, state in _identity_state.items():
+                if state.get("original_message") == prepared_message or state.get("original_message") == original_message:
+                    keys_to_remove.append(key)
+            for key in keys_to_remove:
+                del _identity_state[key]
+            if keys_to_remove:
+                logger.debug(f"Cleared waiting_for_identity for {len(keys_to_remove)} state(s)")
 
 
 def create_chat_client() -> AzureOpenAIChatClient:

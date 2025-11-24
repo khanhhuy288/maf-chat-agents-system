@@ -5,8 +5,8 @@ from typing import Iterable
 
 from rich.console import Console
 
-from obungi_chat_agents_system.schemas import TicketInput
-from obungi_chat_agents_system.workflow import create_ticket_workflow
+from chat_agents_system.schemas import TicketInput
+from chat_agents_system.workflow import create_ticket_workflow
 
 console = Console()
 

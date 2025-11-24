@@ -1,0 +1,16 @@
+# docker-compose.dev.yml
+# Hot reload development configuration
+# Use this to see code changes immediately without rebuilding the container
+#
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+services:
+  ticket-devui:
+    volumes:
+      # Mount source code for hot reload - changes are reflected immediately
+      - ./src:/app/src
+      # Mount logs directory for debugging
+      - ./logs:/app/logs
+    # Keep the same command as base docker-compose.yml
+    command: ["python", "-m", "chat_agents_system.devui_app", "--host", "0.0.0.0", "--port", "8080"]
+

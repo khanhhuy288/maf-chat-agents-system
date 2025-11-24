@@ -1,5 +1,5 @@
 
-# Obungi Ticket Agent System
+# Ticket Agent System
 
 Showcase of a Microsoft Agent Framework workflow that turns free-form German IT helpdesk messages into routed tickets. The system combines Azure OpenAI reasoning, identity extraction, category-specific handling, and Logic App dispatch—all while remaining fully local-dev friendly.
 
@@ -24,7 +24,10 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
 1. **User submits raw text only.** No forms—just paste the full request.
 2. **Agents collaborate sequentially.** Each executor enriches a shared `TicketContext` dataclass.
 3. **Identity-first guardrails.** Missing attributes trigger a friendly clarification message; clients re-run with the required fields.
-4. **Category-specific handling.** Historian tickets get an answer plus a Logic App dispatch; other categories are routed immediately.
+4. **Branching after classification.** The workflow branches into three paths based on category:
+   - **AI_HISTORY**: classification → historian (generates answer) → dispatcher → formatter
+   - **O365/HARDWARE/LOGIN**: classification → dispatcher → formatter (skips historian)
+   - **OTHER**: classification → formatter (early exit, skips both historian and dispatcher)
 5. **Consistent responses.** The formatter returns the answer, classification, and dispatch payload so any client (Dev UI, tests) can display the same result.
 
 ## Getting Started
@@ -32,20 +35,36 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
 2. Copy `.env.example` to `.env`, set Azure OpenAI + Logic App values.
 3. Install dependencies: `uv sync --prerelease=allow`.
 
-### Run the Dev UI (browser showcase)
+### Local Development (DevUI)
+
+**⚠️ DevUI is for LOCAL DEVELOPMENT ONLY, not production!**
 
 ![Workflow input form](2025-11-19_15-43-39.png)
 ![Dev UI execution timeline](2025-11-19_15-19-31.png)
 
-```
-uv run --prerelease=allow obungi-chat-agents-system-devui --auto-open
+```bash
+uv run --prerelease=allow chat-agents-system-devui --auto-open
 ```
 - Registers the "Ticket Workflow" inside the Microsoft Agent Framework Dev UI.
 - Lets reviewers inspect each agent step, streamed responses, and dispatcher payloads.
 - By default, dispatch is simulated (no actual POST requests are sent). Use `--enable-dispatch` to send real requests to the Logic App.
 
-### Sample Cases (scripted demo)
+### Production API (FastAPI)
+
+```bash
+# Run production API server
+uv run --prerelease=allow chat-agents-system-api
+
+# Or with custom port
+uv run --prerelease=allow chat-agents-system-api --port 8000
 ```
+
+- Production-ready REST API at `http://localhost:8000`
+- Interactive API docs at `http://localhost:8000/docs`
+- Health check at `http://localhost:8000/health`
+
+### Sample Cases (scripted demo)
+```bash
 uv run --prerelease=allow python scripts/run_sample_cases.py
 ```
 Runs representative prompts (all categories plus identity edge cases) with dispatch simulation—ideal for regression tests or CI.
@@ -59,20 +78,40 @@ Runs representative prompts (all categories plus identity edge cases) with dispa
 
 ## Project Structure
 ```
-src/obungi_chat_agents_system/
+src/chat_agents_system/
 ├─ agents/                 # Individual executors (intake, identity, validation, etc.)
+├─ api/                    # Production FastAPI REST API
+│  ├─ main.py             # FastAPI application
+│  └─ routes/             # API route handlers
 ├─ workflow.py             # Sequential workflow wiring each agent
-├─ devui_app.py            # Dev UI server entry point
+├─ devui_app.py            # Dev UI server (LOCAL DEVELOPMENT ONLY)
+├─ api_server.py           # Production API server entry point
 └─ schemas.py              # TicketContext + response dataclasses
 ```
 
+## Deployment
+
+### Docker
+
+- **DevUI (Local Development)**: See [DOCKER.md](DOCKER.md) for local development setup
+- **Production API**: Use `Dockerfile.api` for production deployments
+
+### Azure Container Apps
+
+Deploy to Azure Container Apps for serverless container hosting with automatic scaling: See [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md)
+
+### Frontend Integration
+
+Connect your frontend to the production API: See [FRONTEND_INTEGRATION.md](FRONTEND_INTEGRATION.md)
+
 ## Extension Ideas
-- **Docker & cloud-ready deployment:** Bake the Dev UI into a container for reproducible demos or AKS hosting.
-- **Rich web frontend:** Replace the Dev UI with a branded Next.js/shadcn dashboard that surfaces each agent step, streaming output, and retry controls.
-- **Ticket telemetry & analytics:** Persist dispatcher payloads to a database and ship Grafana-style dashboards showing categories, SLA compliance, agent turnaround time, and Logic App performance.
-- **Multi-channel intake:** Add Teams/Slack bots or email ingestion that push tickets into the same workflow schema.
-- **Knowledge-aware responses:** Plug in RAG or SharePoint search to help Historian answers cite source documents.
-- **Agentic orchestration patterns:** Experiment with planner-driven, branching, or concurrent workflows for complex tickets, or swap in review/critic loops to keep responses aligned with compliance requirements.
+
+See [EXTENSION_IDEAS.md](EXTENSION_IDEAS.md) for additional enhancement ideas:
+- Observability & monitoring
+- State management & persistence
+- CI/CD pipelines
+- Multi-channel intake
+- Enhanced agent capabilities
 
 Use this repo to demonstrate real-world agent orchestration, integration-ready prompts, and a complete ticketing pipeline. 
 

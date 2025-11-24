@@ -1,0 +1,45 @@
+version: '3.8'
+
+# Production FastAPI API Docker Compose configuration
+# 
+# This uses the same Dockerfile.api and configuration as Azure Container Apps,
+# providing a seamless development experience. The same container runs locally
+# and in production, ensuring consistency across environments.
+services:
+  ticket-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ticket-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Azure OpenAI Configuration
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-02-15-preview}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT}
+      - AZURE_OPENAI_EMBEDDING_DEPLOYMENT=${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}
+      # Logic App Configuration
+      - TICKET_LOGIC_APP_URL=${TICKET_LOGIC_APP_URL}
+      # Application Settings
+      - DEFAULT_RESPONSE_LANGUAGE=${DEFAULT_RESPONSE_LANGUAGE:-de}
+    env_file:
+      - .env
+    volumes:
+      # Mount logs directory for debugging
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ticket-network
+
+networks:
+  ticket-network:
+    driver: bridge
+
