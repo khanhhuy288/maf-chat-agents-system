@@ -90,4 +90,4 @@ secrets/
 ai-docs/
 .cursor/
 
-obungi_system_requirements.txt
+chat_system_requirements.txt

@@ -12,13 +12,12 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
 ## Agent Lineup & Responsibilities
 | Agent | Purpose | Key Skills |
 | --- | --- | --- |
-| `IntakeExecutor` | Normalizes raw user text, trims whitespace, captures quick heuristics. | Text preprocessing, regex extraction |
-| `IdentityExtractorExecutor` | Azure OpenAI-powered extraction of `Name`, `Vorname`, `E-Mail`. Falls back to regex and requests clarification via metadata. | LLM parsing, resilience |
-| `ValidationExecutor` | Blocks the workflow until mandatory identity fields exist; returns actionable prompts for the Dev UI. | Guardrails, UX loops |
-| `ClassificationExecutor` | Classifies into five categories, creates a 10-word summary, and rewrites the request body for clean downstream payloads. | LLM reasoning, content structuring |
-| `HistorianExecutor` | Generates concise German answers whenever the ticket is “Frage zur Historie von AI.” | Domain-specific response crafting |
-| `DispatcherExecutor` | Posts the normalized ticket JSON to an Azure Logic App (simulatable via a flag). | Integrations, HTTP |
-| `ResponseFormatterExecutor` | Finalizes the human-facing response plus machine-readable metadata for clients. | Presentation, metadata packaging |
+| `IdentityExtractorExecutor` | Entry point that normalizes input, keeps the original request, and extracts `Name`, `Vorname`, `E-Mail` via Azure OpenAI plus regex fallback. | Intake + extraction, LLM parsing |
+| `ValidationExecutor` | Halts the workflow until all identity fields are present, returning a single strict format request for the Dev UI to relay. | Guardrails, UX loops |
+| `ClassificationExecutor` | Categorizes the ticket into five buckets, emits a ≤9-word summary, and produces a cleaned request body for downstream consumers. | LLM reasoning, content structuring |
+| `HistorianExecutor` | Generates concise German answers when the ticket is “Frage zur Historie von AI,” feeding the dispatcher/formatter pipeline. | Domain-specific response crafting |
+| `DispatcherExecutor` | Builds the structured payload and (optionally) posts it to the Logic App; simulation mode mirrors the final success text. | Integrations, HTTP |
+| `ResponseFormatterExecutor` | Consolidates the final human response plus lightweight metadata/payloads; short-circuits OTHER tickets with an `unsupported` status. | Presentation, metadata packaging |
 
 ## Workflow at a Glance
 1. **User submits raw text only.** No forms—just paste the full request.
