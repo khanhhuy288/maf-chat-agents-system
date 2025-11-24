@@ -20,10 +20,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for faster dependency management
 RUN pip install --no-cache-dir uv
 
-# Copy dependency files
-COPY pyproject.toml uv.lock* ./
+# Copy dependency files and README.md (required by hatchling for build)
+COPY pyproject.toml uv.lock* README.md ./
 
-# Install dependencies using uv
+# Copy source code (needed for package build during uv sync)
+COPY src/ ./src/
+
+# Install dependencies using uv (this will install the package in editable mode)
 RUN uv sync --frozen --no-dev || uv sync --frozen
 
 # Final stage: minimal runtime image
