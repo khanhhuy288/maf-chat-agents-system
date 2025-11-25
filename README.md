@@ -45,8 +45,14 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
 
 **⚠️ DevUI is for LOCAL DEVELOPMENT ONLY, not production!**
 
-![Workflow input form](docs/images/workflow-input-form.png)
-![Dev UI execution timeline](docs/images/devui-workflow.png)
+![Ticket workflow in DevUI](docs/images/devui-workflow.png)
+_**Figure 1**: Ticket Workflow registered in the DevUI inspector with each agent step visible._
+
+![Chatting with the support agent](docs/images/agent-requesting-identity.png)
+_**Figure 2**: Conversational Ticket Support Agent calling the workflow behind the scenes and requesting missing identity info._
+
+![DevUI logs and traces](docs/images/devui-function-result.png)
+_**Figure 3**: DevUI logs and function-call traces that make debugging and payload inspection easier._
 
 ```bash
 uv run --prerelease=allow chat-agents-system-devui --auto-open
