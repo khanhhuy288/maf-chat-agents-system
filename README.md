@@ -38,8 +38,8 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
 
 **⚠️ DevUI is for LOCAL DEVELOPMENT ONLY, not production!**
 
-![Workflow input form](2025-11-19_15-43-39.png)
-![Dev UI execution timeline](2025-11-19_15-19-31.png)
+![Workflow input form](docs/images/workflow-input-form.png)
+![Dev UI execution timeline](docs/images/devui-workflow.png)
 
 ```bash
 uv run --prerelease=allow chat-agents-system-devui --auto-open
