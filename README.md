@@ -164,7 +164,7 @@ src/chat_agents_system/
 
 ## 💡 Extension Ideas
 
-See `docs/extensions.md#2-extension-ideas` for additional enhancement ideas:
+See [docs/extensions.md#2-extension-ideas](docs/extensions.md#2-extension-ideas) for additional enhancement ideas:
 - Observability & monitoring
 - State management & persistence
 - CI/CD pipelines
