@@ -87,9 +87,8 @@ logs/
 secrets/
 
 # Project-specific
-ai-docs/
+ai_docs/
 .cursor/
-
 chat_system_requirements.txt
 
 # Terraform
