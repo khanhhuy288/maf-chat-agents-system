@@ -1,9 +1,9 @@
 
-# Ticket Agent System
+# 🎫 Ticket Agent System
 
 Showcase of a Microsoft Agent Framework workflow that turns free-form German IT helpdesk messages into routed tickets. The system combines Azure OpenAI reasoning, identity extraction, category-specific handling, and Logic App dispatch—all while remaining fully local-dev friendly.
 
-## Table of Contents
+## 📑 Table of Contents
 - [Features](#features)
 - [Agent Lineup & Responsibilities](#agent-lineup--responsibilities)
 - [Workflow at a Glance](#workflow-at-a-glance)
@@ -22,14 +22,14 @@ Showcase of a Microsoft Agent Framework workflow that turns free-form German IT 
   - [Frontend Integration](#frontend-integration)
 - [Extension Ideas](#extension-ideas)
 
-## Features
+## ✨ Features
 - Branching Microsoft Agent Framework sequential workflow purpose-built for ticket intake and routing
 - Dev UI conversational agent that mirrors production behavior (identity loops, streamed steps)
 - Deterministic guardrails: strict identity enforcement, thread-aware state, and metadata-rich responses
 - Production-style integrations (Azure OpenAI, Logic Apps) with enforced dispatch simulation for local/dev scenarios
 - FastAPI entry point for automation and downstream integrations, backed by regression tests and sample cases
 
-## Agent Lineup & Responsibilities
+## 👥 Agent Lineup & Responsibilities
 
 ![Ticket workflow in DevUI](docs/images/workflow-overview.png)
 _**Overview of Agent Coordination in DevUI**_
@@ -43,7 +43,7 @@ _**Overview of Agent Coordination in DevUI**_
 | `DispatcherExecutor` | Builds the structured payload and (optionally) posts it to the Logic App; simulation mode mirrors the final success text. | Integrations, HTTP |
 | `ResponseFormatterExecutor` | Consolidates the final human response plus lightweight metadata/payloads; short-circuits OTHER tickets with an `unsupported` status. | Presentation, metadata packaging |
 
-## Workflow at a Glance
+## 🔄 Workflow at a Glance
 1. **User submits raw text only.** No forms—just paste the full request.
 2. **Agents collaborate via branching workflow.** Each executor mutates a shared `TicketContext` dataclass, and the Microsoft Agent Framework switch-case routes requests after classification.
 3. **Identity-first guardrails.** Missing attributes trigger a friendly clarification message; clients re-run with the required fields.
@@ -59,7 +59,7 @@ _**Overview of Agent Coordination in DevUI**_
 - Identity provided via follow-up messages is merged with the preserved original ticket body; classification only sees the original request.
 - Dispatcher simulation is forced in Dev UI and API flows to keep Logic App traffic deterministic unless `--enable-dispatch` is explicitly passed to the Dev UI launcher.
 
-## Getting Started
+## 🚀 Getting Started
 1. Install [uv](https://docs.astral.sh/uv/).
 2. Copy `.env.example` to `.env`, set Azure OpenAI + Logic App values.
 3. Install dependencies: `uv sync --prerelease=allow`.
@@ -110,14 +110,14 @@ Runs representative prompts (all categories plus identity edge cases) with dispa
 - `tests/test_api_tickets.py` uses FastAPI's `TestClient` to cover missing-identity loops, strict identity enforcement, `thread_id` validation, and successful ticket creation.
 - Tests stub Azure OpenAI and Logic App calls, keeping runs deterministic and cost-free.
 
-## Common Tasks
+## 📋 Common Tasks
 - **Run it locally** – DevUI + FastAPI quick start at [docs/run-local.md](docs/run-local.md).
 - **Use Docker** – container parity, hot reload, and image builds at [docs/run-docker.md](docs/run-docker.md).
 - **Run tests / CI** – smoke tests, pytest coverage, and pipeline tips at [docs/testing-ci.md](docs/testing-ci.md).
 - **Provision infra & deploy** – Terraform + Azure Container Apps walkthrough at [docs/cloud-deploy.md](docs/cloud-deploy.md).
 - **Hook up clients & extend** – frontend integration patterns and roadmap ideas at [docs/extensions.md](docs/extensions.md).
 
-## Tech Stack
+## 🛠️ Tech Stack
 - **Agent framework:** Microsoft Agent Framework with branching sequential workflows + DevUI integration
 - **API surface:** FastAPI + Uvicorn for the production server and health/docs endpoints
 - **LLM services:** Azure OpenAI Chat (GPT-4o-mini on Microsoft Foundry) for identity extraction, classification, and historian answers
@@ -125,7 +125,7 @@ Runs representative prompts (all categories plus identity edge cases) with dispa
 - **Integrations:** Azure Logic Apps webhook dispatch (simulation-first), optional Logic App postings in prod
 - **Language & tooling:** Python 3.11+, pytest for tests, Docker for local parity, Terraform + Azure Container Apps for deployment
 
-## Project Structure
+## 📁 Project Structure
 ```
 src/chat_agents_system/
 ├─ agents/
@@ -148,7 +148,7 @@ src/chat_agents_system/
 └─ utils.py                # Shared helpers (logger factory, JSON parsing, etc.)
 ```
 
-## Deployment
+## 🚢 Deployment
 
 ### Docker
 
@@ -162,7 +162,7 @@ src/chat_agents_system/
 
 - Connect your frontend to the production API and handle identity loops correctly: [docs/extensions.md#1-frontend-integration](docs/extensions.md#1-frontend-integration)
 
-## Extension Ideas
+## 💡 Extension Ideas
 
 See `docs/extensions.md#2-extension-ideas` for additional enhancement ideas:
 - Observability & monitoring
