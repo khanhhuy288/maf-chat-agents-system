@@ -1,6 +1,6 @@
 # ☁️ Azure Container Apps Deployment
 
-Short guide to deploy the Chat Agents API to Azure Container Apps with Terraform.
+Guide to deploy the Chat Agents API to Azure Container Apps with Terraform.
 
 ## 📋 Table of Contents
 - [Essentials](#essentials)
@@ -16,15 +16,11 @@ Short guide to deploy the Chat Agents API to Azure Container Apps with Terraform
 - [API Surface After Deploy](#api-surface-after-deploy)
 - [Next Steps & References](#next-steps--references)
 
----
-
 ## ⚡ Essentials
 - Tools: Terraform ≥ 1.0, Azure CLI ≥ 2.0, Docker (`brew install terraform azure-cli docker` on macOS)
 - Azure assets needed: subscription + rights for Resource Group, Container Apps Environment, Container Registry, Key Vault, Log Analytics, optional App Insights
 - Secrets: Azure OpenAI endpoint + API key, Logic App webhook URL
 - Login flow: `az login && az account set --subscription "<name-or-id>"`
-
----
 
 ## 📁 Terraform Layout & Variables
 
@@ -86,8 +82,6 @@ Use tags like `dev-latest`, `staging-<sha>`, `prod-<semver>`.
 - Per-env Key Vaults for secret isolation
 - Terraform state in Azure Storage with key `container-apps-<env>.tfstate`
 
----
-
 ## ⚙️ CI/CD Snapshot
 1. Push to `develop` deploys to dev (automatic after tests).
 2. Merge to `staging` promotes to staging (run integration tests + smoke checks).
@@ -126,8 +120,6 @@ az containerapp logs show \
 - App stuck starting: `az containerapp show ... --query properties.runningStatus`
 - Health: `curl $(terraform output -raw container_app_url)/health`
 
----
-
 ## 📝 Terraform Command Cheat Sheet
 ```bash
 terraform init
@@ -143,8 +135,6 @@ terraform destroy   # irreversible
 - `GET /health`, `GET /ready`
 - `GET /docs`, `GET /redoc`
 - `POST /api/v1/tickets` (primary workflow endpoint)
-
----
 
 ## 📚 Next Steps & References
 - Wire GitHub Actions secrets per environment
