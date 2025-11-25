@@ -3,6 +3,25 @@
 
 Showcase of a Microsoft Agent Framework workflow that turns free-form German IT helpdesk messages into routed tickets. The system combines Azure OpenAI reasoning, identity extraction, category-specific handling, and Logic App dispatch—all while remaining fully local-dev friendly.
 
+## Table of Contents
+- [Features](#features)
+- [Agent Lineup & Responsibilities](#agent-lineup--responsibilities)
+- [Workflow at a Glance](#workflow-at-a-glance)
+  - [Identity & Conversation Guardrails](#identity--conversation-guardrails)
+- [Getting Started](#getting-started)
+  - [Local Development (DevUI)](#local-development-devui)
+  - [Production API (FastAPI)](#production-api-fastapi)
+  - [Sample Cases (scripted demo)](#sample-cases-scripted-demo)
+  - [Automated Tests](#automated-tests)
+- [Common Tasks](#common-tasks)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Deployment](#deployment)
+  - [Docker](#docker)
+  - [Azure Container Apps](#azure-container-apps)
+  - [Frontend Integration](#frontend-integration)
+- [Extension Ideas](#extension-ideas)
+
 ## Features
 - Branching Microsoft Agent Framework sequential workflow purpose-built for ticket intake and routing
 - Dev UI conversational agent that mirrors production behavior (identity loops, streamed steps)
