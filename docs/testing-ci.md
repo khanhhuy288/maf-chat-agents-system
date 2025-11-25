@@ -1,14 +1,14 @@
-# Testing & CI Guide
+# 🧪 Testing & CI Guide
 
 Essential steps to validate the Ticket Agent System. Keep tests fast, deterministic, and aligned with the documented architecture.
 
-## Table of contents
+## 📋 Table of contents
 - [Manual smoke tests](#manual-smoke-tests)
 - [Automated tests](#automated-tests)
 - [CI basics](#ci-basics)
 - [Troubleshooting](#troubleshooting)
 
-## Manual smoke tests
+## 💨 Manual smoke tests
 
 1. Start the API: `uv run --prerelease=allow chat-agents-system-api`
 2. Open `http://localhost:8000/docs` and call `POST /api/v1/tickets`
@@ -35,7 +35,7 @@ Extra scenarios to sanity-check:
 - AI history request (historian answer forwarded)
 - Unsupported request (formatter returns `status:"unsupported"`)
 
-## Automated tests
+## 🤖 Automated tests
 
 ```bash
 uv sync --prerelease=allow
@@ -52,7 +52,7 @@ Sample cases runner (forces simulated dispatch):
 uv run --prerelease=allow python scripts/run_sample_cases.py
 ```
 
-## CI basics
+## 🔄 CI basics
 
 Minimal pipeline:
 1. Checkout
@@ -79,7 +79,7 @@ jobs:
       - run: pytest tests/ -v
 ```
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |

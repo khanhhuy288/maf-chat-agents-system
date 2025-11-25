@@ -1,4 +1,4 @@
-# Run the Ticket Workflow Locally
+# 🏃 Run the Ticket Workflow Locally
 
 Two local entry points ship with the Microsoft Agent Framework project:
 
@@ -7,7 +7,7 @@ Two local entry points ship with the Microsoft Agent Framework project:
 
 Prefer containers? See `docs/run-docker.md`.
 
-## Table of contents
+## 📑 Table of contents
 
 - [Prerequisites](#prerequisites)
 - [DevUI (local demo)](#devui-local-demo)
@@ -15,7 +15,7 @@ Prefer containers? See `docs/run-docker.md`.
 - [Helpful scripts](#helpful-scripts)
 - [Troubleshooting](#troubleshooting)
 
-## Prerequisites
+## ✅ Prerequisites
 
 - Python 3.11+ (3.12 works) and [`uv`](https://docs.astral.sh/uv/)
 - `.env` populated from `.env.example`:
@@ -29,7 +29,7 @@ Install dependencies once:
 uv sync --prerelease=allow
 ```
 
-## DevUI (local demo)
+## 🎨 DevUI (local demo)
 
 ```bash
 uv run --prerelease=allow chat-agents-system-devui --auto-open
@@ -40,7 +40,7 @@ uv run --prerelease=allow chat-agents-system-devui --auto-open
 - Dispatcher stays in simulation; pass `--enable-dispatch` only when you want to hit the Logic App
 - Restart the `uv run` process after editing `src/`
 
-## FastAPI (local API)
+## 🚀 FastAPI (local API)
 
 ```bash
 # default port 8000
@@ -66,13 +66,13 @@ curl -X POST http://localhost:8000/api/v1/tickets \
   -d '{"message":"Schneider, Peter, peter@example.com","thread_id":"demo"}'
 ```
 
-## Helpful scripts
+## 🛠️ Helpful scripts
 
 - `uv run --prerelease=allow python scripts/run_sample_cases.py`
 - `pytest tests/ -v`
 - `pytest tests/test_api_tickets.py::test_missing_identity_two_step_flow`
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 | Issue | Fix |
 | --- | --- |

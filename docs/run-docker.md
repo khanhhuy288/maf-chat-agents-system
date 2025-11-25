@@ -1,8 +1,8 @@
-# Run the Ticket Workflow with Docker
+# 🐳 Run the Ticket Workflow with Docker
 
 Use Docker when you need parity with production (FastAPI container) or want a self-contained DevUI demo. Keep DevUI local only.
 
-## Table of contents
+## 📑 Table of contents
 
 - [Key files](#key-files)
 - [Prereqs](#prereqs)
@@ -13,7 +13,7 @@ Use Docker when you need parity with production (FastAPI container) or want a se
 - [Troubleshooting](#troubleshooting)
 - [Related docs](#related-docs)
 
-## Key files
+## 📁 Key files
 
 | File | Purpose |
 | --- | --- |
@@ -23,12 +23,12 @@ Use Docker when you need parity with production (FastAPI container) or want a se
 | `docker-compose.dev.yml` | Hot-reload overlay (bind-mounts source) |
 | `docker-compose.api.yml` | API-only stack mirroring Azure runtime |
 
-## Prereqs
+## ✅ Prereqs
 
 - Docker Desktop ≥ 20.10 with Compose v2
 - `.env` populated with Azure OpenAI + Logic App values (see `README.md`)
 
-## DevUI workflow (local demo)
+## 🎨 DevUI workflow (local demo)
 
 ```bash
 # Rebuild + start
@@ -48,7 +48,7 @@ docker-compose -f docker-compose.yml -f docker-compose.dev.yml restart ticket-de
 
 Use this path while editing Python; rebuild only for dependency changes.
 
-## FastAPI workflow (production parity)
+## ⚡ FastAPI workflow (production parity)
 
 ```bash
 docker-compose -f docker-compose.api.yml up -d --build
@@ -60,7 +60,7 @@ docker-compose -f docker-compose.api.yml down
 - Dispatcher forced into simulation mode
 - Check `http://localhost:8000/docs`
 
-## Compose cheat sheet
+## 📝 Compose cheat sheet
 
 ```bash
 docker-compose up           # attach logs
@@ -73,7 +73,7 @@ DEVUI_PORT=9090 docker-compose up -d
 API_PORT=9000 docker-compose -f docker-compose.api.yml up -d
 ```
 
-## Building images directly
+## 🔨 Building images directly
 
 ```bash
 docker build -t ticket-devui:latest .
@@ -83,7 +83,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.api -t tick
 
 Push only the API image to registries; DevUI stays local.
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 | Issue | Action |
 | --- | --- |
@@ -93,7 +93,7 @@ Push only the API image to registries; DevUI stays local.
 | Cache stuck | `docker-compose build --no-cache` |
 | Need shell | `docker-compose exec ticket-devui /bin/bash` |
 
-## Related docs
+## 📚 Related docs
 
 - `docs/run-local.md` for non-Docker loops
 - `docs/testing-ci.md` for pytest + smoke tests

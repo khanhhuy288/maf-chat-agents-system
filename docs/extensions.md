@@ -70,7 +70,7 @@ app.add_middleware(
 1. **Observability** – structured logs, `/metrics`, tracing.
 2. **Externalized state** – Redis conversation cache, PostgreSQL ticket log, optional vector store for historian RAG.
 3. **Security + API hardening** – auth on `/api/v1/tickets`, rate limiting, audit logs.
-4. **CI/CD & deployments** – GitHub Actions or Azure DevOps with tests, scans, ACA blue/green rollouts.
+4. **CI/CD & deployments** – GitHub Actions or Azure DevOps with tests, scans, ACA blue/green rollouts; set up distinct dev, stage, and prod environments with appropriate env vars and automated gating.
 5. **Multi-channel intake** – Teams/Slack bots and email parsers standardizing inputs to `TicketInput`.
 6. **Agent upgrades** – multi-language identity extraction, classification confidence scores, dispatcher retries.
 7. **Analytics & testing** – dashboards, exports, load/chaos/A-B experiments.

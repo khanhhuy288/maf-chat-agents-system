@@ -1,24 +1,24 @@
-# Azure Container Apps Deployment
+# ☁️ Azure Container Apps Deployment
 
 Short guide to deploy the Chat Agents API to Azure Container Apps with Terraform.
 
-## Table of Contents
-- [Essentials](#1-essentials)
-- [Terraform Layout & Variables](#2-terraform-layout--variables)
-- [Deployment Workflow](#3-deployment-workflow)
-- [Updating After Launch](#4-updating-after-launch)
-- [Environment Strategy](#5-environment-strategy)
-- [CI/CD Snapshot](#6-cicd-snapshot)
-- [Secrets & Key Vault](#7-secrets--key-vault)
-- [Scaling, Cost, Monitoring](#8-scaling-cost-monitoring)
-- [Troubleshooting Quick Hits](#9-troubleshooting-quick-hits)
-- [Terraform Command Cheat Sheet](#10-terraform-command-cheat-sheet)
-- [API Surface After Deploy](#11-api-surface-after-deploy)
-- [Next Steps & References](#12-next-steps--references)
+## 📋 Table of Contents
+- [Essentials](#essentials)
+- [Terraform Layout & Variables](#terraform-layout--variables)
+- [Deployment Workflow](#deployment-workflow)
+- [Updating After Launch](#updating-after-launch)
+- [Environment Strategy](#environment-strategy)
+- [CI/CD Snapshot](#cicd-snapshot)
+- [Secrets & Key Vault](#secrets--key-vault)
+- [Scaling, Cost, Monitoring](#scaling-cost-monitoring)
+- [Troubleshooting Quick Hits](#troubleshooting-quick-hits)
+- [Terraform Command Cheat Sheet](#terraform-command-cheat-sheet)
+- [API Surface After Deploy](#api-surface-after-deploy)
+- [Next Steps & References](#next-steps--references)
 
 ---
 
-## 1. Essentials
+## ⚡ Essentials
 - Tools: Terraform ≥ 1.0, Azure CLI ≥ 2.0, Docker (`brew install terraform azure-cli docker` on macOS)
 - Azure assets needed: subscription + rights for Resource Group, Container Apps Environment, Container Registry, Key Vault, Log Analytics, optional App Insights
 - Secrets: Azure OpenAI endpoint + API key, Logic App webhook URL
@@ -26,7 +26,7 @@ Short guide to deploy the Chat Agents API to Azure Container Apps with Terraform
 
 ---
 
-## 2. Terraform Layout & Variables
+## 📁 Terraform Layout & Variables
 
 ```
 terraform/
@@ -53,14 +53,14 @@ Optional knobs: `min_replicas`, `max_replicas`, CPU/memory, `enable_application_
 
 > `terraform.tfvars` stays local. For teams, enable the Azure Storage backend block in `main.tf` so state lives in one place.
 
-## 3. Deployment Workflow
+## 🚀 Deployment Workflow
 > Container Apps pulls the image immediately. Always build/push before creating the app.
 
 Use `@terraform/deploy.sh` (run it from within the `terraform/` directory) so the order stays correct: infrastructure ➜ image ➜ Container App. The script runs `terraform init/plan` as needed, waits for the ACR image build to finish, and only then creates the Container App.
 
 Already have an image in ACR? Run a single `terraform apply` after `plan`.
 
-## 4. Updating After Launch
+## 🔄 Updating After Launch
 - **Infra change**: edit `.tf` → `terraform plan` → `terraform apply`.
 - **App-only change**:
 
@@ -79,7 +79,7 @@ az containerapp update \
 
 Use tags like `dev-latest`, `staging-<sha>`, `prod-<semver>`.
 
-## 5. Environment Strategy
+## 🌍 Environment Strategy
 - Separate resource groups per env (`rg-chat-agents-{dev,staging,prod}`)
 - One tfvars per env (`terraform.dev.tfvars`, etc.) + matching GitHub secrets
 - Single ACR with env-specific tags unless stricter isolation requires multiple registries
@@ -88,14 +88,14 @@ Use tags like `dev-latest`, `staging-<sha>`, `prod-<semver>`.
 
 ---
 
-## 6. CI/CD Snapshot
+## ⚙️ CI/CD Snapshot
 1. Push to `develop` deploys to dev (automatic after tests).
 2. Merge to `staging` promotes to staging (run integration tests + smoke checks).
 3. Merge to `main` deploys to prod (requires manual approval + monitoring window).
 4. Each stage runs the same steps: checkout → tests → Terraform plan/apply with env tfvars → `az acr build` → `az containerapp update` → health probe (`/health`).
 5. Tag container images per environment (`dev-latest`, `staging-<sha>`, `prod-<semver>`) to keep rollbacks simple.
 
-## 7. Secrets & Key Vault
+## 🔐 Secrets & Key Vault
 - Terraform provisions Key Vault, stores Azure OpenAI key + Logic App URL, then injects them as env vars
 - Updating secrets requires updating `terraform.tfvars` (or KV) + `terraform apply`
 - Useful commands:
@@ -106,7 +106,7 @@ az keyvault secret list --vault-name $KV_NAME
 az keyvault secret show --vault-name $KV_NAME --name azure-openai-api-key -o tsv
 ```
 
-## 8. Scaling, Cost, Monitoring
+## 📊 Scaling, Cost, Monitoring
 - Set `min_replicas`/`max_replicas` per env (`min_replicas=0` for dev to scale to zero)
 - Reduce CPU/memory + log retention outside prod
 - Enable App Insights via `enable_application_insights = true`, then use `terraform output application_insights_connection_string`
@@ -119,7 +119,7 @@ az containerapp logs show \
   --tail 100
 ```
 
-## 9. Troubleshooting Quick Hits
+## 🔧 Troubleshooting Quick Hits
 - Auth: `az login` + `az account set`
 - Name collisions: adjust `project_name`
 - Image pull errors: ensure role assignment on ACR for managed identity (`az role assignment list ...`)
@@ -128,7 +128,7 @@ az containerapp logs show \
 
 ---
 
-## 10. Terraform Command Cheat Sheet
+## 📝 Terraform Command Cheat Sheet
 ```bash
 terraform init
 terraform plan
@@ -139,14 +139,14 @@ terraform output
 terraform destroy   # irreversible
 ```
 
-## 11. API Surface After Deploy
+## 🌐 API Surface After Deploy
 - `GET /health`, `GET /ready`
 - `GET /docs`, `GET /redoc`
 - `POST /api/v1/tickets` (primary workflow endpoint)
 
 ---
 
-## 12. Next Steps & References
+## 📚 Next Steps & References
 - Wire GitHub Actions secrets per environment
 - Turn on remote state + App Insights dashboards
 - Add custom domain via `azurerm_container_app_custom_domain`
