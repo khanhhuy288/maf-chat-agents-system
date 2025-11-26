@@ -1,7 +1,7 @@
 
 # 🎫 Ticket Agent System
 
-Showcase of a Microsoft Agent Framework workflow that turns free-form German IT helpdesk messages into routed tickets. The system combines Azure OpenAI reasoning, identity extraction, category-specific handling, and Logic App dispatch—all while remaining fully local-dev friendly.
+Showcase of a Microsoft Agent Framework workflow that turns free-form German IT helpdesk messages into routed tickets. The system combines Azure OpenAI reasoning, identity extraction, category-specific handling, and Logic App dispatch, all while remaining fully local-dev friendly.
 
 ## 📑 Table of Contents
 - [Features](#features)
@@ -172,4 +172,3 @@ See [docs/extensions.md#2-extension-ideas](docs/extensions.md#2-extension-ideas)
 - Enhanced agent capabilities
 
 Use this repo to demonstrate real-world agent orchestration, integration-ready prompts, and a complete ticketing pipeline. 
-
